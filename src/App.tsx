@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { GameState, PlayerState, Upgrade } from "./lib/types";
 import { drawUpgrades, resolveRally } from "./lib/gameLogic";
+import { buildWsUrl } from "@/lib/websocket";
 import { hasUpgrade, countUpgrade, applyUpgradeCombining } from "./lib/upgrades";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
@@ -63,6 +64,7 @@ interface OnlineSession {
   myPlayerId: "p1" | "p2";
   lobbyCode: string;
   partnerName: string;
+  sessionToken: string;
 }
 
 export default function App() {
@@ -71,6 +73,17 @@ export default function App() {
   const [onlineSession, setOnlineSession] = useState<OnlineSession | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const manualCloseRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttemptsRef.current = 0;
+  };
 
   // Broadcast current state to online partner (reads wsRef so never stale)
   const broadcast = useCallback((state: GameState) => {
@@ -107,17 +120,52 @@ export default function App() {
           }
           return received;
         });
-      } else if (msg.type === "partner_left") {
-        toast({ title: "Opponent Disconnected", description: "Your partner left the game." });
+      } else if (msg.type === "partner_left" || msg.type === "partner_disconnected") {
+        toast({ title: "Opponent Disconnected", description: "Your partner has disconnected." });
+      } else if (msg.type === "reconnect_success") {
+        toast({ title: "Reconnected", description: "Your online game connection has been restored." });
       }
     };
+    const closeHandler = () => {
+      if (manualCloseRef.current) return;
+      if (!onlineSession?.sessionToken || !onlineSession?.lobbyCode) return;
+      reconnectAttemptsRef.current += 1;
+      const delay = Math.min(5000, 1000 * reconnectAttemptsRef.current);
+      reconnectTimerRef.current = setTimeout(() => {
+        const socket = new WebSocket(buildWsUrl());
+        socket.onopen = () => {
+          reconnectAttemptsRef.current = 0;
+          socket.send(JSON.stringify({
+            type: "reconnect",
+            code: onlineSession.lobbyCode,
+            sessionToken: onlineSession.sessionToken,
+          }));
+          wsRef.current = socket;
+          setWs(socket);
+        };
+        socket.onerror = () => {
+          toast({ title: "Reconnect Failed", description: "Trying again..." });
+        };
+        socket.onclose = () => {
+          if (reconnectAttemptsRef.current < 5) return;
+          toast({ title: "Connection Lost", description: "Could not restore your online game." });
+        };
+      }, delay);
+    };
+
     ws.addEventListener("message", handler);
-    return () => ws.removeEventListener("message", handler);
-  }, [ws, toast]);
+    ws.addEventListener("close", closeHandler);
+    return () => {
+      ws.removeEventListener("message", handler);
+      ws.removeEventListener("close", closeHandler);
+    };
+  }, [ws, toast, onlineSession]);
 
   // ─── Online lobby ──────────────────────────────────────────────────────────
 
   const handlePlayOnline = () => {
+    manualCloseRef.current = false;
+    clearReconnectTimer();
     setGameState(prev => ({ ...prev, phase: "online-lobby" }));
   };
 
@@ -126,11 +174,13 @@ export default function App() {
     myPlayerId: "p1" | "p2",
     myName: string,
     partnerName: string,
-    lobbyCode: string
+    lobbyCode: string,
+    sessionToken: string
   ) => {
     wsRef.current = socket;
     setWs(socket);
-    setOnlineSession({ myPlayerId, lobbyCode, partnerName });
+    setOnlineSession({ myPlayerId, lobbyCode, partnerName, sessionToken });
+    clearReconnectTimer();
 
     const p1Name = myPlayerId === "p1" ? myName : partnerName;
     const p2Name = myPlayerId === "p2" ? myName : partnerName;
@@ -147,10 +197,12 @@ export default function App() {
   };
 
   const handleBackToLocal = () => {
+    manualCloseRef.current = true;
     wsRef.current?.close();
     wsRef.current = null;
     setWs(null);
     setOnlineSession(null);
+    clearReconnectTimer();
     setGameState(prev => ({ ...prev, phase: "name-entry" }));
   };
 
@@ -397,10 +449,12 @@ export default function App() {
   // ─── Reset ─────────────────────────────────────────────────────────────────
 
   const resetGame = () => {
+    manualCloseRef.current = true;
     wsRef.current?.close();
     wsRef.current = null;
     setWs(null);
     setOnlineSession(null);
+    clearReconnectTimer();
     setGameState(makeInitialState());
   };
 

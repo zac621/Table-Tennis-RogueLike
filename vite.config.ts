@@ -30,6 +30,13 @@ export default defineConfig({
     port: 4173,
     strictPort: true,
     open: false,
+    proxy: {
+      "/api/ws": {
+        target: "http://localhost:4174",
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     host: "0.0.0.0",

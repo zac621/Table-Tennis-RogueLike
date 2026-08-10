@@ -1,10 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import { Copy, Check, Wifi, ArrowLeft, Loader2 } from "lucide-react";
+import { buildWsUrl } from "@/lib/websocket";
 
 interface Props {
   onReady: (
@@ -12,7 +13,8 @@ interface Props {
     myPlayerId: "p1" | "p2",
     myName: string,
     partnerName: string,
-    lobbyCode: string
+    lobbyCode: string,
+    sessionToken: string
   ) => void;
   onBack: () => void;
 }
@@ -25,20 +27,19 @@ type Status =
   | "joining"
   | "joined";
 
-function buildWsUrl() {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/ws`;
-}
-
 export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const [mode, setMode] = useState<Mode>("choose");
   const [status, setStatus] = useState<Status>("idle");
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [lobbyCode, setLobbyCode] = useState("");
+  const [sessionToken, setSessionToken] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const wsMessageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
+  const wsErrorHandlerRef = useRef<(() => void) | null>(null);
+  const wsCloseHandlerRef = useRef<(() => void) | null>(null);
 
   const connectAndSend = (msg: object, onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void) => {
     setError("");
@@ -49,7 +50,7 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
       ws.send(JSON.stringify(msg));
     };
 
-    ws.onmessage = (event) => {
+    const handleMessage = (event: MessageEvent) => {
       const data = JSON.parse(event.data as string);
       if (data.type === "error") {
         setError(data.message as string);
@@ -60,30 +61,48 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
       onMessage(ws, data);
     };
 
-    ws.onerror = () => {
+    const handleError = () => {
       setError("Connection failed. Make sure both devices are online.");
       setStatus("idle");
     };
 
-    ws.onclose = () => {
+    const handleClose = () => {
       if (status !== "joined") {
         setStatus("idle");
       }
     };
+
+    ws.addEventListener("message", handleMessage);
+    ws.addEventListener("error", handleError);
+    ws.addEventListener("close", handleClose);
+
+    wsMessageHandlerRef.current = handleMessage;
+    wsErrorHandlerRef.current = handleError;
+    wsCloseHandlerRef.current = handleClose;
   };
 
   const handleCreate = () => {
     if (!myName.trim()) { setError("Enter your name first."); return; }
     setStatus("connecting");
+    let token = "";
     connectAndSend(
       { type: "create_lobby", playerName: myName.trim() },
       (ws, data) => {
         if (data.type === "lobby_created") {
+          token = data.sessionToken as string;
           setLobbyCode(data.code as string);
+          setSessionToken(token);
           setStatus("waiting_partner");
         } else if (data.type === "partner_joined") {
           setStatus("joined");
-          onReady(ws, "p1", myName.trim(), data.partnerName as string, lobbyCode || (data.code as string));
+          onReady(
+            ws,
+            "p1",
+            myName.trim(),
+            data.partnerName as string,
+            data.code as string,
+            token
+          );
         }
       }
     );
@@ -97,8 +116,16 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
       { type: "join_lobby", code: joinCode.trim().toUpperCase(), playerName: myName.trim() },
       (ws, data) => {
         if (data.type === "lobby_joined") {
+          setSessionToken(data.sessionToken as string);
           setStatus("joined");
-          onReady(ws, "p2", myName.trim(), data.partnerName as string, joinCode.trim().toUpperCase());
+          onReady(
+            ws,
+            "p2",
+            myName.trim(),
+            data.partnerName as string,
+            data.code as string,
+            data.sessionToken as string
+          );
         }
       }
     );
@@ -110,6 +137,16 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  useEffect(() => {
+    return () => {
+      const ws = wsRef.current;
+      if (!ws) return;
+      if (wsMessageHandlerRef.current) ws.removeEventListener("message", wsMessageHandlerRef.current);
+      if (wsErrorHandlerRef.current) ws.removeEventListener("error", wsErrorHandlerRef.current);
+      if (wsCloseHandlerRef.current) ws.removeEventListener("close", wsCloseHandlerRef.current);
+    };
+  }, []);
 
   const busy = status === "connecting" || status === "joining";
 

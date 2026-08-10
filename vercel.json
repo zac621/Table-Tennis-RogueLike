@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "build": {
+    "env": {
+      "VITE_WS_URL": "@VITE_WS_URL"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/ws",
+      "dest": "/api/ws.ts"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}
