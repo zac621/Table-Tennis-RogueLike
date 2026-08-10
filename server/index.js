@@ -69,26 +69,46 @@ function handleDisconnect(ws) {
 function handleMessage(ws, msg) {
   const { type } = msg;
   if (type === "create_lobby") {
-    const lobbyId = randomUUID().slice(0, 8);
+    const lobbyId = randomUUID().slice(0, 8).toUpperCase();
     const hostToken = createSession(lobbyId, "p1");
     const guestToken = createSession(lobbyId, "p2");
-    const lobby = { lobbyId, hostToken, guestToken, state: null, lastSeen: now() };
+    const lobby = {
+      lobbyId,
+      hostToken,
+      guestToken,
+      hostName: msg.playerName,
+      state: null,
+      lastSeen: now(),
+    };
     lobbies.set(lobbyId, lobby);
     lobby.p1 = ws;
     ws.meta = { lobbyId, role: "p1", sessionToken: hostToken };
-    sendSafe(ws, { type: "lobby_created", lobbyId, sessionToken: hostToken, guestToken });
+    sendSafe(ws, {
+      type: "lobby_created",
+      code: lobbyId,
+      sessionToken: hostToken,
+    });
     return;
   }
 
   if (type === "join_lobby") {
-    const { lobbyId } = msg;
+    const lobbyId = String(msg.lobbyId || "").toUpperCase();
     const lobby = lobbies.get(lobbyId);
     if (!lobby) { sendSafe(ws, { type: "error", message: "Lobby not found" }); return; }
     lobby.p2 = ws;
     ws.meta = { lobbyId, role: "p2", sessionToken: lobby.guestToken };
     lobby.lastSeen = now();
-    sendSafe(ws, { type: "joined", lobbyId, sessionToken: lobby.guestToken });
-    if (lobby.p1) sendSafe(lobby.p1, { type: "partner_joined" });
+    sendSafe(ws, {
+      type: "lobby_joined",
+      code: lobbyId,
+      sessionToken: lobby.guestToken,
+      partnerName: lobby.hostName,
+    });
+    if (lobby.p1) sendSafe(lobby.p1, {
+      type: "partner_joined",
+      partnerName: msg.playerName,
+      code: lobbyId,
+    });
     return;
   }
 
