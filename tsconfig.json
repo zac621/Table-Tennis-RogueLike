@@ -2,14 +2,13 @@
   "compilerOptions": {
     "target": "es2022",
     "module": "esnext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "jsx": "preserve",
     "lib": ["esnext", "dom", "dom.iterable"],
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": false,
     "esModuleInterop": true,
-    "allowImportingTsExtensions": true,
     "types": ["node", "vite/client"],
     "baseUrl": ".",
     "paths": {
@@ -33,6 +32,6 @@
     "alwaysStrict": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*", "api/**/*"],
+  "include": ["src/**/*", "api/**/*", "backend/**/*"],
   "exclude": ["node_modules", "build", "dist", "**/*.test.ts"]
 }

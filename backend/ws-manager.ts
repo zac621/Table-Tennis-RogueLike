@@ -1,14 +1,66 @@
-import crypto from "crypto";
-import { WebSocketServer } from "ws";
+import * as crypto from "crypto";
+import type { IncomingMessage, Server as HttpServer } from "http";
+import type { Socket } from "net";
+import { WebSocketServer, type WebSocket } from "ws";
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+type PlayerRole = "host" | "guest";
+
+type Player = {
+  socket: WebSocket | null;
+  playerName: string;
+  role: PlayerRole;
+  token: string;
+  connected: boolean;
+};
+
+type Lobby = {
+  code: string;
+  host: Player;
+  guest: Player | null;
+  lastState: unknown;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
+};
+
+type WebSocketWithMeta = WebSocket & {
+  lobbyCode?: string;
+  playerToken?: string;
+  playerRole?: PlayerRole;
+};
+
+type JsonPayload = {
+  type: string;
+  [key: string]: unknown;
+};
+
+type LobbyResult =
+  | { error: string }
+  | { lobby: Lobby; guest: Player };
+
+type ReconnectResult =
+  | { error: string }
+  | { lobby: Lobby; player: Player; role: PlayerRole };
+
+type ManagerStore = {
+  wss: WebSocketServer | null;
+  attachedServers: WeakSet<HttpServer>;
+  lobbies: Map<string, Lobby>;
+};
+
+declare global {
+  var __tableTennisWsManager: ManagerStore | undefined;
+}
 
 const LOBBY_EXPIRATION_MS = 60_000;
 const PROTOCOL_PATH = "/api/ws";
 
-const globalStore = globalThis.__tableTennisWsManager ??= {
-  wss: null,
-  attachedServers: new WeakSet(),
-  lobbies: new Map(),
-};
+const globalStore: ManagerStore =
+  globalThis.__tableTennisWsManager ??
+  (globalThis.__tableTennisWsManager = {
+    wss: null,
+    attachedServers: new WeakSet<HttpServer>(),
+    lobbies: new Map(),
+  });
 
 function generateCode() {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -23,7 +75,7 @@ function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-function sendJson(ws, payload) {
+function sendJson(ws: WebSocket, payload: unknown) {
   try {
     ws.send(JSON.stringify(payload));
   } catch (error) {
@@ -31,7 +83,7 @@ function sendJson(ws, payload) {
   }
 }
 
-function scheduleLobbyCleanup(lobby) {
+function scheduleLobbyCleanup(lobby: Lobby) {
   if (lobby.cleanupTimer) {
     clearTimeout(lobby.cleanupTimer);
   }
@@ -41,30 +93,30 @@ function scheduleLobbyCleanup(lobby) {
   }, LOBBY_EXPIRATION_MS);
 }
 
-function clearLobbyCleanup(lobby) {
+function clearLobbyCleanup(lobby: Lobby) {
   if (lobby.cleanupTimer) {
     clearTimeout(lobby.cleanupTimer);
     lobby.cleanupTimer = null;
   }
 }
 
-function getPeer(lobby, role) {
+function getPeer(lobby: Lobby, role: PlayerRole) {
   return role === "host" ? lobby.guest : lobby.host;
 }
 
-function getRoleByToken(lobby, token) {
+function getRoleByToken(lobby: Lobby, token: string): PlayerRole | null {
   if (lobby.host?.token === token) return "host";
   if (lobby.guest?.token === token) return "guest";
   return null;
 }
 
-function createLobby(playerName, ws) {
+function createLobby(playerName: string, ws: WebSocketWithMeta): Lobby {
   let code = generateCode();
   while (globalStore.lobbies.has(code)) {
     code = generateCode();
   }
 
-  const host = {
+  const host: Player = {
     socket: ws,
     playerName,
     role: "host",
@@ -72,7 +124,7 @@ function createLobby(playerName, ws) {
     connected: true,
   };
 
-  const lobby = {
+  const lobby: Lobby = {
     code,
     host,
     guest: null,
@@ -87,7 +139,11 @@ function createLobby(playerName, ws) {
   return lobby;
 }
 
-function joinLobby(code, playerName, ws) {
+function joinLobby(
+  code: string,
+  playerName: string,
+  ws: WebSocketWithMeta
+): LobbyResult {
   const lobby = globalStore.lobbies.get(code);
   if (!lobby) {
     return { error: "That lobby does not exist." };
@@ -97,7 +153,7 @@ function joinLobby(code, playerName, ws) {
     return { error: "That lobby is already full." };
   }
 
-  const guest = {
+  const guest: Player = {
     socket: ws,
     playerName,
     role: "guest",
@@ -114,7 +170,11 @@ function joinLobby(code, playerName, ws) {
   return { lobby, guest };
 }
 
-function reconnectPlayer(code, token, ws) {
+function reconnectPlayer(
+  code: string,
+  token: string,
+  ws: WebSocketWithMeta
+): ReconnectResult {
   const lobby = globalStore.lobbies.get(code);
   if (!lobby) {
     return { error: "That lobby no longer exists." };
@@ -159,7 +219,7 @@ function reconnectPlayer(code, token, ws) {
   return { lobby, player, role };
 }
 
-function handleStateUpdate(ws, message) {
+function handleStateUpdate(ws: WebSocketWithMeta, message: JsonPayload) {
   const code = ws.lobbyCode;
   if (!code) {
     sendJson(ws, { type: "error", message: "Not connected to a lobby." });
@@ -183,7 +243,7 @@ function handleStateUpdate(ws, message) {
   sendJson(peer.socket, { type: "state_update", state: lobby.lastState });
 }
 
-function handleLeave(ws) {
+function handleLeave(ws: WebSocketWithMeta) {
   const code = ws.lobbyCode;
   const role = ws.playerRole;
   if (!code || !role) {
@@ -212,7 +272,7 @@ function handleLeave(ws) {
   }
 }
 
-function handleJsonMessage(ws, message) {
+function handleJsonMessage(ws: WebSocketWithMeta, message: JsonPayload) {
   if (!message || typeof message !== "object" || typeof message.type !== "string") {
     sendJson(ws, { type: "error", message: "Invalid payload." });
     return;
@@ -234,7 +294,7 @@ function handleJsonMessage(ws, message) {
       const code = String(message.code || "").toUpperCase();
       const playerName = String(message.playerName || "Player 2");
       const result = joinLobby(code, playerName, ws);
-      if (result.error) {
+      if ("error" in result) {
         sendJson(ws, { type: "error", message: result.error });
         return;
       }
@@ -246,11 +306,13 @@ function handleJsonMessage(ws, message) {
         partnerName: lobby.host.playerName,
         sessionToken: guest.token,
       });
-      sendJson(lobby.host.socket, {
-        type: "partner_joined",
-        code: lobby.code,
-        partnerName: guest.playerName,
-      });
+      if (lobby.host.socket) {
+        sendJson(lobby.host.socket, {
+          type: "partner_joined",
+          code: lobby.code,
+          partnerName: guest.playerName,
+        });
+      }
       return;
     }
 
@@ -258,7 +320,7 @@ function handleJsonMessage(ws, message) {
       const code = String(message.code || "").toUpperCase();
       const token = String(message.sessionToken || "");
       const result = reconnectPlayer(code, token, ws);
-      if (result.error) {
+      if ("error" in result) {
         sendJson(ws, { type: "reconnect_failed", message: result.error });
         ws.close();
         return;
@@ -283,8 +345,10 @@ function handleJsonMessage(ws, message) {
   }
 }
 
-export function createWebSocketServer(req, res) {
-  const server = req.socket?.server;
+type SocketWithServer = Socket & { server?: HttpServer };
+
+export function createWebSocketServer(req: VercelRequest, res: VercelResponse) {
+  const server = (req.socket as SocketWithServer)?.server;
   if (!server) {
     res.statusCode = 500;
     res.end("Server object unavailable");
@@ -317,16 +381,25 @@ export function createWebSocketServer(req, res) {
     });
   }
 
-  server.on("upgrade", (request, socket, head) => {
-    if (request.url !== PROTOCOL_PATH) {
-      socket.destroy();
-      return;
-    }
+  server.on(
+    "upgrade",
+    (request: IncomingMessage, socket: Socket, head: Buffer) => {
+      if (request.url !== PROTOCOL_PATH) {
+        socket.destroy();
+        return;
+      }
 
-    globalStore.wss.handleUpgrade(request, socket, head, (ws) => {
-      globalStore.wss.emit("connection", ws, request);
-    });
-  });
+      const wss = globalStore.wss;
+      if (!wss) {
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    }
+  );
 
   globalStore.attachedServers.add(server);
   res.statusCode = 200;
