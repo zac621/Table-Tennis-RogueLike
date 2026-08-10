@@ -29,7 +29,7 @@ type Status =
 
 export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const [mode, setMode] = useState<Mode>("choose");
-  const [status, setStatus] = useState<Status>("idle");
+  const [status, setStatusState] = useState<Status>("idle");
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [lobbyCode, setLobbyCode] = useState("");
@@ -37,16 +37,20 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const statusRef = useRef<Status>(status);
+  const statusRef = useRef<Status>("idle");
   const wsMessageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
   const wsErrorHandlerRef = useRef<(() => void) | null>(null);
   const wsCloseHandlerRef = useRef<(() => void) | null>(null);
+
+  const setStatus = (next: Status) => {
+    statusRef.current = next;
+    setStatusState(next);
+  };
 
   const connectAndSend = (msg: object, onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void) => {
     setError("");
     const ws = new WebSocket(buildWsUrl());
     wsRef.current = ws;
-    statusRef.current = status;
 
     ws.onopen = () => {
       ws.send(JSON.stringify(msg));
@@ -64,14 +68,14 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     };
 
     const handleError = () => {
-      if (statusRef.current !== "joined") {
+      if (statusRef.current === "connecting" || statusRef.current === "joining") {
         setError("Connection failed. Make sure both devices are online.");
         setStatus("idle");
       }
     };
 
     const handleClose = () => {
-      if (statusRef.current !== "joined") {
+      if (statusRef.current === "connecting" || statusRef.current === "joining") {
         setStatus("idle");
       }
     };
@@ -141,10 +145,6 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
       setTimeout(() => setCopied(false), 2000);
     });
   };
-
-  useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
 
   useEffect(() => {
     return () => {
