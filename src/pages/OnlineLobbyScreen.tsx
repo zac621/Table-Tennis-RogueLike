@@ -38,6 +38,7 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const statusRef = useRef<Status>("idle");
+  const serverReadyRef = useRef(false);
   const wsMessageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
   const wsErrorHandlerRef = useRef<(() => void) | null>(null);
   const wsCloseHandlerRef = useRef<(() => void) | null>(null);
@@ -47,11 +48,30 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     setStatusState(next);
   };
 
-  const connectAndSend = (
+  const prewarmWebSocketEndpoint = async () => {
+    if (serverReadyRef.current) return;
+
+    const url = new URL("/api/ws", window.location.href).toString();
+    const response = await fetch(url, { method: "GET" });
+    if (!response.ok) {
+      throw new Error("WebSocket endpoint unavailable");
+    }
+    serverReadyRef.current = true;
+  };
+
+  const connectAndSend = async (
     msg: object,
     onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void
   ) => {
     setError("");
+
+    try {
+      await prewarmWebSocketEndpoint();
+    } catch (err) {
+      setError("Connection failed. Make sure the WebSocket endpoint is available.");
+      setStatus("idle");
+      return;
+    }
 
     const ws = new WebSocket(buildWsUrl());
     wsRef.current = ws;
@@ -95,11 +115,11 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     wsCloseHandlerRef.current = handleClose;
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!myName.trim()) { setError("Enter your name first."); return; }
     setStatus("connecting");
     let token = "";
-    connectAndSend(
+    await connectAndSend(
       { type: "create_lobby", playerName: myName.trim() },
       (ws, data) => {
         if (data.type === "lobby_created") {
@@ -122,11 +142,11 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     );
   };
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     if (!myName.trim()) { setError("Enter your name first."); return; }
     if (!joinCode.trim()) { setError("Enter the lobby code."); return; }
     setStatus("joining");
-    connectAndSend(
+    await connectAndSend(
       { type: "join_lobby", code: joinCode.trim().toUpperCase(), playerName: myName.trim() },
       (ws, data) => {
         if (data.type === "lobby_joined") {

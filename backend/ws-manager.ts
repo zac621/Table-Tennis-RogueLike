@@ -351,8 +351,9 @@ function handleJsonMessage(ws: WebSocketWithMeta, message: JsonPayload) {
 type SocketWithServer = Socket & { server?: HttpServer };
 
 export function createWebSocketServer(req: VercelRequest, res: VercelResponse) {
-  const socket = (req.socket as SocketWithServer) ?? (res.socket as SocketWithServer);
-  const server = socket?.server;
+  const server =
+    (req.socket as SocketWithServer)?.server ??
+    (res.socket as SocketWithServer)?.server;
   if (!server) {
     res.statusCode = 500;
     res.end("Server object unavailable");
