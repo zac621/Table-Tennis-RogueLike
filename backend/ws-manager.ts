@@ -110,18 +110,18 @@ function getRoleByToken(lobby: Lobby, token: string): PlayerRole | null {
   return null;
 }
 
-function createLobby(playerName: string, ws: WebSocketWithMeta): Lobby {
+function createLobby(playerName: string, ws?: WebSocketWithMeta): Lobby {
   let code = generateCode();
   while (globalStore.lobbies.has(code)) {
     code = generateCode();
   }
 
   const host: Player = {
-    socket: ws,
+    socket: ws ?? null,
     playerName,
     role: "host",
     token: generateToken(),
-    connected: true,
+    connected: Boolean(ws),
   };
 
   const lobby: Lobby = {
@@ -132,9 +132,12 @@ function createLobby(playerName: string, ws: WebSocketWithMeta): Lobby {
     cleanupTimer: null,
   };
 
-  ws.lobbyCode = code;
-  ws.playerToken = host.token;
-  ws.playerRole = "host";
+  if (ws) {
+    ws.lobbyCode = code;
+    ws.playerToken = host.token;
+    ws.playerRole = "host";
+  }
+
   globalStore.lobbies.set(code, lobby);
   return lobby;
 }
@@ -348,7 +351,8 @@ function handleJsonMessage(ws: WebSocketWithMeta, message: JsonPayload) {
 type SocketWithServer = Socket & { server?: HttpServer };
 
 export function createWebSocketServer(req: VercelRequest, res: VercelResponse) {
-  const server = (req.socket as SocketWithServer)?.server;
+  const socket = (req.socket as SocketWithServer) ?? (res.socket as SocketWithServer);
+  const server = socket?.server;
   if (!server) {
     res.statusCode = 500;
     res.end("Server object unavailable");

@@ -47,12 +47,18 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     setStatusState(next);
   };
 
-  const connectAndSend = (msg: object, onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void) => {
+  const connectAndSend = (
+    msg: object,
+    onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void
+  ) => {
     setError("");
+
     const ws = new WebSocket(buildWsUrl());
     wsRef.current = ws;
+    let opened = false;
 
     ws.onopen = () => {
+      opened = true;
       ws.send(JSON.stringify(msg));
     };
 
@@ -68,14 +74,14 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     };
 
     const handleError = () => {
-      if (statusRef.current === "connecting" || statusRef.current === "joining") {
+      if (!opened && (statusRef.current === "connecting" || statusRef.current === "joining")) {
         setError("Connection failed. Make sure both devices are online.");
         setStatus("idle");
       }
     };
 
     const handleClose = () => {
-      if (statusRef.current === "connecting" || statusRef.current === "joining") {
+      if (!opened && (statusRef.current === "connecting" || statusRef.current === "joining")) {
         setStatus("idle");
       }
     };
