@@ -37,6 +37,7 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const statusRef = useRef<Status>(status);
   const wsMessageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
   const wsErrorHandlerRef = useRef<(() => void) | null>(null);
   const wsCloseHandlerRef = useRef<(() => void) | null>(null);
@@ -45,6 +46,7 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     setError("");
     const ws = new WebSocket(buildWsUrl());
     wsRef.current = ws;
+    statusRef.current = status;
 
     ws.onopen = () => {
       ws.send(JSON.stringify(msg));
@@ -62,12 +64,14 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     };
 
     const handleError = () => {
-      setError("Connection failed. Make sure both devices are online.");
-      setStatus("idle");
+      if (statusRef.current !== "joined") {
+        setError("Connection failed. Make sure both devices are online.");
+        setStatus("idle");
+      }
     };
 
     const handleClose = () => {
-      if (status !== "joined") {
+      if (statusRef.current !== "joined") {
         setStatus("idle");
       }
     };
@@ -137,6 +141,10 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   useEffect(() => {
     return () => {
