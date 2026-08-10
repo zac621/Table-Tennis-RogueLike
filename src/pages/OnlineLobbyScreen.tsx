@@ -38,7 +38,6 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const statusRef = useRef<Status>("idle");
-  const serverReadyRef = useRef(false);
   const wsMessageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
   const wsErrorHandlerRef = useRef<(() => void) | null>(null);
   const wsCloseHandlerRef = useRef<(() => void) | null>(null);
@@ -48,30 +47,11 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     setStatusState(next);
   };
 
-  const prewarmWebSocketEndpoint = async () => {
-    if (serverReadyRef.current) return;
-
-    const url = new URL("/api/ws", window.location.href).toString();
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) {
-      throw new Error("WebSocket endpoint unavailable");
-    }
-    serverReadyRef.current = true;
-  };
-
   const connectAndSend = async (
     msg: object,
     onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void
   ) => {
     setError("");
-
-    try {
-      await prewarmWebSocketEndpoint();
-    } catch (err) {
-      setError("Connection failed. Make sure the WebSocket endpoint is available.");
-      setStatus("idle");
-      return;
-    }
 
     const ws = new WebSocket(buildWsUrl());
     wsRef.current = ws;
