@@ -92,7 +92,7 @@ function handleMessage(ws, msg) {
   }
 
   if (type === "join_lobby") {
-    const lobbyId = String(msg.lobbyId || "").toUpperCase();
+    const lobbyId = String(msg.code || "").toUpperCase();
     const lobby = lobbies.get(lobbyId);
     if (!lobby) { sendSafe(ws, { type: "error", message: "Lobby not found" }); return; }
     lobby.p2 = ws;

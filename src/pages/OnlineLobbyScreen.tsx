@@ -125,6 +125,10 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
   const handleJoin = async () => {
     if (!myName.trim()) { setError("Enter your name first."); return; }
     if (!joinCode.trim()) { setError("Enter the lobby code."); return; }
+    if (joinCode.trim().length !== 6) {
+      setError("Lobby code must be exactly 6 characters.");
+      return;
+    }
     setStatus("joining");
     await connectAndSend(
       { type: "join_lobby", code: joinCode.trim().toUpperCase(), playerName: myName.trim() },
