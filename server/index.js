@@ -69,7 +69,7 @@ function handleDisconnect(ws) {
 function handleMessage(ws, msg) {
   const { type } = msg;
   if (type === "create_lobby") {
-    const lobbyId = randomUUID().slice(0, 8).toUpperCase();
+    const lobbyId = randomUUID().slice(0, 6).toUpperCase();
     const hostToken = createSession(lobbyId, "p1");
     const guestToken = createSession(lobbyId, "p2");
     const lobby = {
