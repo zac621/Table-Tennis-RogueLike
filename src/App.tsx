@@ -241,19 +241,11 @@ export default function App() {
 
   const handleRallyWinner = (winnerId: "p1" | "p2") => {
     setGameState(prev => {
-      let finalPlayers = { ...prev.players };
-      if (winnerId !== "p1") {
-        finalPlayers = {
-          p1: { ...prev.players.p2, id: "p1" },
-          p2: { ...prev.players.p1, id: "p2" },
-        };
-      }
       const newState: GameState = {
         ...prev,
-        players: finalPlayers,
-        servingPlayerId: "p1",
+        servingPlayerId: winnerId,
         phase: "upgrade-draft",
-        draftTurn: "p1",
+        draftTurn: winnerId,
         draftPool: drawUpgrades(3, Date.now(), "legendary"),
       };
       broadcast(newState);
@@ -511,6 +503,7 @@ export default function App() {
           draftTurn={gameState.draftTurn!}
           p1Name={gameState.players.p1.name}
           p2Name={gameState.players.p2.name}
+          myPlayerId={onlineSession?.myPlayerId}
           onSelect={handleDraftSelect}
         />
       )}
