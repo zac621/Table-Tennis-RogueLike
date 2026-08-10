@@ -283,8 +283,17 @@ function handleJsonMessage(ws, message) {
   }
 }
 
-function attachWebSocketServer(server, path = PROTOCOL_PATH) {
+export function createWebSocketServer(req, res) {
+  const server = req.socket?.server;
+  if (!server) {
+    res.statusCode = 500;
+    res.end("Server object unavailable");
+    return;
+  }
+
   if (globalStore.attachedServers.has(server)) {
+    res.statusCode = 200;
+    res.end("WebSocket endpoint");
     return;
   }
 
@@ -309,7 +318,7 @@ function attachWebSocketServer(server, path = PROTOCOL_PATH) {
   }
 
   server.on("upgrade", (request, socket, head) => {
-    if (request.url !== path) {
+    if (request.url !== PROTOCOL_PATH) {
       socket.destroy();
       return;
     }
@@ -320,6 +329,6 @@ function attachWebSocketServer(server, path = PROTOCOL_PATH) {
   });
 
   globalStore.attachedServers.add(server);
+  res.statusCode = 200;
+  res.end("WebSocket endpoint");
 }
-
-export { attachWebSocketServer };

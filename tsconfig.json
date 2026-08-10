@@ -8,6 +8,7 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": false,
+    "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "types": ["node", "vite/client"],
     "baseUrl": ".",
