@@ -223,8 +223,11 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
               )}
 
               {status === "connecting" && (
-                <div className="flex items-center justify-center gap-2 text-muted-foreground py-4">
+                <div className="flex flex-col items-center justify-center text-muted-foreground py-4">
+                  <div className="flex items-center gap-2">
                   <Loader2 className="animate-spin w-4 h-4" /> Connecting…
+                </div>
+                <div className="text-xs mt-1">(may take up to one minute)</div>
                 </div>
               )}
 
