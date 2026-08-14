@@ -1,6 +1,15 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
+/* Add standard `line-clamp` properties for compatibility with linters/browsers */
+@layer utilities {
+  .line-clamp-1 { line-clamp: 1; }
+  .line-clamp-2 { line-clamp: 2; }
+  .line-clamp-3 { line-clamp: 3; }
+  .line-clamp-4 { line-clamp: 4; }
+  .line-clamp-5 { line-clamp: 5; }
+  .line-clamp-6 { line-clamp: 6; }
+}
 
 @custom-variant dark (&:is(.dark *));
 

@@ -1,0 +1,14 @@
+{
+  "files.exclude": {
+    "dist": true
+  },
+  "search.exclude": {
+    "dist": true
+  },
+  "files.watcherExclude": {
+    "dist/**": true
+  },
+  "files.associations": {
+    "**/dist/**": "plaintext"
+  }
+}
