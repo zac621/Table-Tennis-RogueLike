@@ -86,12 +86,22 @@ export function resolveRally(
   l.hp -= damage;
 
   // --- Phoenix (epic-4): survive fatal, restore 10% max HP ---
-  if (l.hp <= 0 && hasUpgrade(l.upgrades, 'epic-4')) {
-    l.hp = Math.max(1, Math.round(l.maxHp * 0.1));
-    // Consume one copy
-    const idx = l.upgrades.findIndex(u => u.id === 'epic-4');
-    if (idx !== -1) l.upgrades.splice(idx, 1);
+  // --- Phoenix (epic-4): survive fatal, restore 10% max HP ---
+if (l.hp <= 0 && hasUpgrade(l.upgrades, 'epic-4')) {
+  l.hp = Math.max(1, Math.round(l.maxHp * 0.1));
+
+  // Consume ONE Phoenix charge (stack-aware)
+  const idx = l.upgrades.findIndex(u => u.id === 'epic-4');
+  if (idx !== -1) {
+    const phoenix = l.upgrades[idx];
+
+    if ((phoenix.stackCount ?? 1) > 1) {
+      phoenix.stackCount!--; // decrement one charge
+    } else {
+      l.upgrades.splice(idx, 1); // remove last charge
+    }
   }
+}
 
   // --- Counter Strike flag: set on loser for next rally ---
   if (hasUpgrade(l.upgrades, 'rare-3')) {

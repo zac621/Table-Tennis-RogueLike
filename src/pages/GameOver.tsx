@@ -34,10 +34,18 @@ export default function GameOver({ state, onReset }: Props) {
             <h4 className="font-bold text-sm uppercase tracking-wider mb-2">Build History</h4>
             <div className="flex flex-wrap gap-2">
               {p.upgrades.length > 0 ? p.upgrades.map((u, i) => (
-                <span key={`${u.id}-${i}`} className={`text-xs px-2 py-1 rounded border bg-background text-glow-${u.rarity} border-border glow-${u.rarity}`}>
+                <span
+                  key={`${u.id}-${i}`}
+                  className={`text-xs px-2 py-1 rounded border bg-background text-glow-${u.rarity} border-border glow-${u.rarity}`}
+                >
                   {u.name}
+                  {u.stackCount && u.stackCount > 1 && (
+                    <span className="ml-1 font-bold text-white">×{u.stackCount}</span>
+                  )}
                 </span>
-              )) : <span className="text-sm text-muted-foreground">No upgrades</span>}
+              )) : (
+                <span className="text-sm text-muted-foreground">No upgrades</span>
+              )}
             </div>
           </div>
         ))}

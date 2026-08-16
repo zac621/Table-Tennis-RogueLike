@@ -158,10 +158,22 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                         {finalCost}g
                       </span>
                     </div>
+
                     <p className="text-muted-foreground flex-1 text-sm">{u.description}</p>
+
                     <div className="mt-auto pt-4 border-t border-border">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{u.rarity}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        {u.rarity}
+                      </p>
                     </div>
+
+                    {/* ⭐ STACK BADGE */}
+                    {u.stackCount && u.stackCount > 1 && (
+                      <div className="absolute bottom-2 right-2 bg-black/70 text-white px-2 py-1 rounded text-sm font-bold">
+                        ×{u.stackCount}
+                      </div>
+                    )}
+
                     {!canAfford && (
                       <div className="absolute inset-0 flex items-center justify-center bg-background/60 rounded-xl font-bold text-destructive text-xl z-10">
                         Too Expensive
