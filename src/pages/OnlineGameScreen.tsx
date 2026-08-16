@@ -48,6 +48,8 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
       {upgrades.length === 0 && (
         <span className="text-xs text-muted-foreground italic">No upgrades yet</span>
       )}
+
+      {/* ⭐ Visible upgrades */}
       {visible.map((u, i) => (
         <span
           key={u.instanceId ?? `${u.id}-${i}`}
@@ -55,8 +57,13 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
           className={`text-xs px-1.5 py-0.5 rounded border bg-background text-glow-${u.rarity} glow-${u.rarity} cursor-help select-none`}
         >
           {u.name}
+          {u.stackCount && u.stackCount > 1 && (
+            <span className="ml-1 font-bold text-white">×{u.stackCount}</span>
+          )}
         </span>
       ))}
+
+      {/* ⭐ Overflow button */}
       {extra.length > 0 && (
         <div className="relative">
           <button
@@ -67,6 +74,8 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
           >
             +{extra.length}…
           </button>
+
+          {/* ⭐ Overflow popup */}
           <AnimatePresence>
             {showExtra && (
               <motion.div
@@ -83,6 +92,9 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
                     className={`text-xs px-1.5 py-0.5 rounded border bg-background text-glow-${u.rarity} glow-${u.rarity}`}
                   >
                     {u.name}
+                    {u.stackCount && u.stackCount > 1 && (
+                      <span className="ml-1 font-bold text-white">×{u.stackCount}</span>
+                    )}
                   </span>
                 ))}
               </motion.div>
@@ -93,6 +105,7 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
     </div>
   );
 }
+
 
 // ── Gold source breakdown (fades 3 s after each rally) ───────────────────────
 

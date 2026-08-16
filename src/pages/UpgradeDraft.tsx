@@ -39,18 +39,30 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
                 key={`${u.id}-${i}`}
               >
                 <Card
-                  className={`w-64 h-80 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
+                  className={`relative w-64 h-80 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
                   onClick={() => !disabled && onSelect(u, i)}
                   data-testid={`card-upgrade-${u.id}`}
                 >
                   <div className="flex justify-between items-start mb-4">
                     <h3 className={`font-bold text-lg text-glow-${u.rarity}`}>{u.name}</h3>
                   </div>
+
                   <p className="text-muted-foreground flex-1">{u.description}</p>
+
                   <div className="mt-auto pt-4 border-t border-border">
-                    <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">{u.rarity}</p>
+                    <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                      {u.rarity}
+                    </p>
                   </div>
+
+                  {/* ⭐ STACK BADGE */}
+                  {u.stackCount && u.stackCount > 1 && (
+                    <div className="absolute bottom-2 right-2 bg-black/70 text-white px-2 py-1 rounded text-sm font-bold">
+                      ×{u.stackCount}
+                    </div>
+                  )}
                 </Card>
+
               </motion.div>
             );
           })}

@@ -52,43 +52,21 @@ const RARITY_ORDER: Rarity[] = ['common', 'rare', 'epic', 'legendary'];
 // into one upgrade of the next rarity, preserving the combined stack power.
 // Cascades until no more pairs exist.
 export function applyUpgradeCombining(upgrades: Upgrade[]): Upgrade[] {
-  let result = [...upgrades];
-  let changed = true;
+  const map = new Map<string, Upgrade>();
 
-  while (changed) {
-    changed = false;
-    const seen = new Map<string, number>(); // key → first matching index
+  for (const u of upgrades) {
+    const key = `${u.id}::${u.rarity}`;
 
-    for (let i = 0; i < result.length; i++) {
-      const u = result[i];
-      if (u.rarity === 'legendary') continue; // legendaries stack freely, never combine
-      const key = `${u.id}::${u.rarity}`;
-
-      if (seen.has(key)) {
-        const i1 = seen.get(key)!;
-        const u1 = result[i1];
-        const u2 = result[i];
-        const rarityIdx = RARITY_ORDER.indexOf(u1.rarity);
-        const nextRarity = RARITY_ORDER[rarityIdx + 1];
-
-        const combined: Upgrade = {
-          ...u1,
-          rarity: nextRarity,
-          // stackCount carries the full combined power so countUpgrade stays correct
-          stackCount: (u1.stackCount ?? 1) + (u2.stackCount ?? 1),
-          instanceId: `combined-${u1.id}-${nextRarity}-${Math.random().toString(36).slice(2)}`,
-        };
-
-        // Remove both originals (higher index first to preserve ordering)
-        result = result.filter((_, idx) => idx !== i1 && idx !== i);
-        result.push(combined);
-        changed = true;
-        break; // restart scan with updated array
-      } else {
-        seen.set(key, i);
-      }
+    if (!map.has(key)) {
+      // First copy → store it
+      map.set(key, { ...u, stackCount: u.stackCount ?? 1 });
+    } else {
+      // Additional copy → increment stackCount
+      const existing = map.get(key)!;
+      existing.stackCount = (existing.stackCount ?? 1) + (u.stackCount ?? 1);
     }
   }
 
-  return result;
+  return Array.from(map.values());
 }
+

@@ -23,7 +23,13 @@ export function resolveRally(
 ): { winner: PlayerState; loser: PlayerState; result: RallyResult } {
   const w = JSON.parse(JSON.stringify(winner)) as PlayerState;
   const l = JSON.parse(JSON.stringify(loser)) as PlayerState;
-
+  
+  // Capture HP before the rally
+  const hpBefore: Record<'p1' | 'p2', number> = {
+  p1: winner.id === 'p1' ? winner.hp : loser.hp,
+  p2: winner.id === 'p2' ? winner.hp : loser.hp,
+  };
+  
   // --- Streak Updates ---
   w.winStreak += 1;
   w.lossStreak = 0;
@@ -199,23 +205,25 @@ export function resolveRally(
   }
 
   return {
-    winner: w,
-    loser: l,
-    result: {
-      winnerId: w.id,
-      loserId: l.id,
-      damageDealt: damage,
-      isCrit,
-      healAmounts: {
-        [w.id]: winnerHealAmount,
-        [l.id]: 0,
-      } as Record<'p1' | 'p2', number>,
-      goldEarned: {
-        [w.id]: wGold,
-        [l.id]: lGold,
-      } as Record<'p1' | 'p2', GoldBreakdown>,
-    },
-  };
+  winner: w,
+  loser: l,
+  result: {
+    winnerId: w.id,
+    loserId: l.id,
+    damageDealt: damage,
+    isCrit,
+    healAmounts: {
+      [w.id]: winnerHealAmount,
+      [l.id]: 0,
+    } as Record<'p1' | 'p2', number>,
+    goldEarned: {
+      [w.id]: wGold,
+      [l.id]: lGold,
+    } as Record<'p1' | 'p2', GoldBreakdown>,
+    combatEvents: [],        // required by RallyResult
+    hpBefore,                // required by RallyResult
+  },
+};
 }
 
 // Roll a random upgrade, re-rolling up to 20 times to avoid excluded IDs
