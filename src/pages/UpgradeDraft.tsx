@@ -57,8 +57,10 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
 
                   {/* ⭐ STACK BADGE */}
                   {u.stackCount && u.stackCount > 1 && (
-                    <div className="absolute bottom-2 right-2 bg-black/70 text-white px-2 py-1 rounded text-sm font-bold">
-                      ×{u.stackCount}
+                    <div className="absolute bottom-2 right-2 bg-black/70 px-2 py-1 rounded text-sm">
+                      <span className={`font-semibold text-glow-${u.rarity} opacity-90`}>
+                        ×{u.stackCount}
+                      </span>
                     </div>
                   )}
                 </Card>

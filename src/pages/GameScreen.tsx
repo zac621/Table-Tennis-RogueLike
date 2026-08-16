@@ -62,14 +62,19 @@ function PlayerPanel({ p, isServing }: { p: PlayerState; isServing: boolean }) {
         </h3>
         <div className="flex flex-wrap gap-1">
           {p.upgrades.map((u, i) => (
-            <div
-              key={`${u.instanceId ?? u.id}-${i}`}
-              className={`text-xs px-2 py-1 rounded border bg-background glow-${u.rarity} text-glow-${u.rarity} cursor-help`}
-              title={u.description}
-            >
-              {u.name}
-            </div>
-          ))}
+        <div
+          key={`${u.instanceId ?? u.id}-${i}`}
+          className={`text-xs px-2 py-1 rounded border bg-background glow-${u.rarity} text-glow-${u.rarity} cursor-help`}
+          title={u.description}
+        >
+          {u.name}
+          {u.stackCount && u.stackCount > 1 && (
+            <span className={`ml-1 font-semibold text-glow-${u.rarity} opacity-90`}>
+              ×{u.stackCount}
+            </span>
+          )}
+        </div>
+      ))}
         </div>
       </div>
     </div>

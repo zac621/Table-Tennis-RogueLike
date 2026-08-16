@@ -58,7 +58,9 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
         >
           {u.name}
           {u.stackCount && u.stackCount > 1 && (
-            <span className="ml-1 font-bold text-white">×{u.stackCount}</span>
+            <span className={`ml-1 font-semibold text-glow-${u.rarity} opacity-90`}>
+              ×{u.stackCount}
+            </span>
           )}
         </span>
       ))}
@@ -93,7 +95,9 @@ function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
                   >
                     {u.name}
                     {u.stackCount && u.stackCount > 1 && (
-                      <span className="ml-1 font-bold text-white">×{u.stackCount}</span>
+                      <span className={`ml-1 font-semibold text-glow-${u.rarity} opacity-90`}>
+                        ×{u.stackCount}
+                      </span>
                     )}
                   </span>
                 ))}
