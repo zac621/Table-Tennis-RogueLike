@@ -256,25 +256,45 @@ export default function App() {
   // ─── Upgrade draft ─────────────────────────────────────────────────────────
 
   const handleDraftSelect = (upgrade: Upgrade, index: number) => {
-    setGameState(prev => {
-      const isP1 = prev.draftTurn === "p1";
-      const activeId = isP1 ? "p1" : "p2";
-      const newPlayers = { ...prev.players };
-      newPlayers[activeId] = {
-        ...newPlayers[activeId],
-        // Apply combining after adding (handles cascading promotions automatically)
-        upgrades: applyUpgradeCombining([...newPlayers[activeId].upgrades, upgrade]),
+  setGameState(prev => {
+    if (!prev.servingPlayerId) return prev; // safety
+
+    const winnerId = prev.servingPlayerId;                 // rally winner
+    const loserId = winnerId === "p1" ? "p2" : "p1";       // rally loser
+
+    const activeId = prev.draftTurn!;                      // current drafter
+    const newPlayers = { ...prev.players };
+    newPlayers[activeId] = {
+      ...newPlayers[activeId],
+      upgrades: applyUpgradeCombining([...newPlayers[activeId].upgrades, upgrade]),
+    };
+
+    const newPool = prev.draftPool.filter((_, i) => i !== index);
+
+    let newState: GameState;
+
+    if (prev.draftTurn === winnerId) {
+      // Winner just picked → loser picks next from remaining pool
+      newState = {
+        ...prev,
+        players: newPlayers,
+        draftTurn: loserId,
+        draftPool: newPool,
       };
-      const newPool = prev.draftPool.filter((_, i) => i !== index);
+    } else {
+      // Loser just picked → both have picked → go to battle
+      newState = {
+        ...prev,
+        players: newPlayers,
+        phase: "battle",
+      };
+    }
 
-      const newState: GameState = isP1
-        ? { ...prev, players: newPlayers, draftTurn: "p2", draftPool: newPool }
-        : { ...prev, players: newPlayers, phase: "battle" };
+    broadcast(newState);
+    return newState;
+  });
+};
 
-      broadcast(newState);
-      return newState;
-    });
-  };
 
   // ─── Battle (rally-based) ──────────────────────────────────────────────────
 
