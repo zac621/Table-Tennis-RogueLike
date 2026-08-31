@@ -29,7 +29,8 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
             Waiting for <span className="font-semibold text-foreground">{activeName}</span> to pick their first ability.
           </div>
         )}
-        <div className="flex overflow-x-auto md:flex-wrap md:justify-center gap-4 w-full items-start snap-x snap-mandatory">
+        <div className="flex flex-wrap justify-center gap-6 w-full items-center">
+
 
           {pool.map((u, i) => {
             const disabled = myPlayerId != null && !isMyTurn;
@@ -40,7 +41,7 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
                 key={`${u.id}-${i}`}
               >
                 <Card
-                  className={`relative w-56 h-60 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
+                  className={`relative w-56 h-35 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
                   onClick={() => !disabled && onSelect(u, i)}
                   data-testid={`card-upgrade-${u.id}`}
                 >

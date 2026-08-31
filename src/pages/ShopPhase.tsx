@@ -116,7 +116,8 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
       </div>
 
       {/* Upgrade Cards */}
-      <div className="flex overflow-x-auto md:flex-wrap md:justify-center gap-4 w-full items-start snap-x snap-mandatory">
+      <div className="flex flex-wrap justify-center gap-6 w-full items-center">
+
 
         <AnimatePresence mode="popLayout">
           {pool.length === 0 ? (
@@ -145,7 +146,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                   whileTap={canAfford ? { scale: 0.95 } : {}}
                 >
                   <Card
-                    className={`relative w-56 h-60 flex flex-col p-4 transition-colors bg-card border ${
+                    className={`relative w-56 h-35 flex flex-col p-4 transition-colors bg-card border ${
 
                       canAfford
                         ? `cursor-pointer hover:border-primary glow-${u.rarity}`
