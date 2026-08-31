@@ -37,38 +37,7 @@ export function resolveRally(
   const w = JSON.parse(JSON.stringify(winner)) as PlayerState;
   const l = JSON.parse(JSON.stringify(loser)) as PlayerState;
   
-  // --- DOT Effects (Poison & Ignite) ---
 
-    // Poison: 20% of CURRENT HP
-    if (w.poisonTicks > 0) {
-      w.poisonTicks--;
-      const dmg = Math.floor(w.hp * 0.20);
-      w.hp -= dmg;
-    }
-    if (l.poisonTicks > 0) {
-      l.poisonTicks--;
-      const dmg = Math.floor(l.hp * 0.20);
-      l.hp -= dmg;
-    }
-
-    // Ignite: 10% of MAX HP + healing reduction
-    if (w.igniteTicks > 0) {
-      w.igniteTicks--;
-      const dmg = Math.floor(w.maxHp * 0.10);
-      w.hp -= dmg;
-      w.healingReduction = true;
-    } else {
-      w.healingReduction = false;
-    }
-
-    if (l.igniteTicks > 0) {
-      l.igniteTicks--;
-      const dmg = Math.floor(l.maxHp * 0.10);
-      l.hp -= dmg;
-      l.healingReduction = true;
-    } else {
-      l.healingReduction = false;
-    }
 
   // Capture HP before the rally
   const hpBefore: Record<'p1' | 'p2', number> = {
@@ -84,11 +53,46 @@ export function resolveRally(
   l.lossStreak += 1;
   w.totalWins += 1;
 
-  // --- Thorns (common-6): 1 damage every 3 losses ---
-  const thornsStacks = countUpgrade(l.upgrades, 'common-6');
-  if (thornsStacks > 0 && l.lossStreak % 3 === 0) {
-    w.hp -= thornsStacks; // ignores modifiers
-  }
+ // --- DOT & Thorns damage (added to final rally damage) ---
+
+let dotDamageToWinner = 0;
+let dotDamageToLoser = 0;
+let thornsDamageToWinner = 0;
+
+// Poison DOT (20% of HP at start of rally)
+if (w.poisonTicks > 0) {
+  w.poisonTicks--;
+  dotDamageToWinner += Math.floor(hpBefore[w.id] * 0.20);
+}
+if (l.poisonTicks > 0) {
+  l.poisonTicks--;
+  dotDamageToLoser += Math.floor(hpBefore[l.id] * 0.20);
+}
+
+
+// Ignite DOT (10% max HP + healing reduction)
+if (w.igniteTicks > 0) {
+  w.igniteTicks--;
+  dotDamageToWinner += Math.floor(w.maxHp * 0.10);
+  w.healingReduction = true;
+} else {
+  w.healingReduction = false;
+}
+
+if (l.igniteTicks > 0) {
+  l.igniteTicks--;
+  dotDamageToLoser += Math.floor(l.maxHp * 0.10);
+  l.healingReduction = true;
+} else {
+  l.healingReduction = false;
+}
+
+// Thorns (common-6): 1 damage every 3 losses
+const thornsStacks = countUpgrade(l.upgrades, 'common-6');
+if (thornsStacks > 0 && l.lossStreak % 3 === 0) {
+  thornsDamageToWinner += thornsStacks;
+}
+
 
   // --- Shields Up (legendary-5): shield every 5 losses ---
   const shieldsUpStacks = countUpgrade(l.upgrades, 'legendary-5');
@@ -135,6 +139,9 @@ export function resolveRally(
     // Headhunter (epic-6): crits deal +3 extra per copy
     damage += 3 * countUpgrade(w.upgrades, 'epic-6');
   }
+// Add DOT & Thorns to final damage
+damage += dotDamageToLoser;      // DOT applied to loser
+
 
   // --- Defense Reduction ---
   // Iron Defense (common-1): -1 damage per copy on the loser's side (min 1)
@@ -149,6 +156,37 @@ if (l.shield > 0 && damage > 0) {
 
 // --- Apply Damage ---
 l.hp -= damage;
+// Apply DOT damage to winner (normal damage rules)
+if (dotDamageToWinner > 0) {
+  let dmg = dotDamageToWinner;
+
+  // Iron Defense reduces damage taken
+  dmg = Math.max(1, dmg - countUpgrade(w.upgrades, 'common-1'));
+
+  // Shield blocks DOT
+  if (w.shield > 0 && dmg > 0) {
+    w.shield--;
+    dmg = 0;
+  }
+
+  w.hp -= dmg;
+}
+
+// Apply Thorns damage to winner (normal damage rules)
+if (thornsDamageToWinner > 0) {
+  let dmg = thornsDamageToWinner;
+
+  // Iron Defense reduces damage taken
+  dmg = Math.max(1, dmg - countUpgrade(w.upgrades, 'common-1'));
+
+  // Shield blocks Thorns
+  if (w.shield > 0 && dmg > 0) {
+    w.shield--;
+    dmg = 0;
+  }
+
+  w.hp -= dmg;
+}
 
 
   // --- Phoenix (epic-4): survive fatal, restore 10% max HP ---
