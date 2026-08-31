@@ -41,7 +41,7 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
                 key={`${u.id}-${i}`}
               >
                 <Card
-                  className={`relative w-86 h-32 flex flex-col p-2 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
+                  className={`relative w-86 h-40 flex flex-col p-2 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
                   onClick={() => !disabled && onSelect(u, i)}
                   data-testid={`card-upgrade-${u.id}`}
                 >
