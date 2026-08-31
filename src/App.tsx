@@ -51,19 +51,26 @@ function buildExcludeList(upgrades: Upgrade[]): string[] {
 
   const shopDiscount = countUpgrade(upgrades, 'common-5') + countUpgrade(upgrades, 'legendary-3') * 3;
   if (shopDiscount >= 17) exclude.push('common-5', 'legendary-3');
-  
+
   // Poison (common-7): stop offering at 100% chance
-  if (countUpgrade(upgrades, 'common-7') * 3 >= 100) {
-    exclude.push('common-7');
-  }
+  if (countUpgrade(upgrades, 'common-7') * 3 >= 100) exclude.push('common-7');
 
   // Ignite (rare-10): stop offering at 100% chance
-  if (countUpgrade(upgrades, 'rare-10') * 5 >= 100) {
-    exclude.push('rare-10');
+  if (countUpgrade(upgrades, 'rare-10') * 5 >= 100) exclude.push('rare-10');
+
+ // ⭐ NEW: Shields Up (legendary-5) cap at 4 stacks
+  if (countUpgrade(upgrades, 'legendary-5') >= 4) {
+   exclude.push('legendary-5');
+ }
+
+  // ⭐ NEW: Phoenix (epic-4) cap at 3 stacks
+  if (countUpgrade(upgrades, 'epic-4') >= 3) {
+   exclude.push('epic-4');
   }
 
   return exclude;
 }
+
 
 const makeInitialState = (): GameState => ({
   phase: "name-entry",
