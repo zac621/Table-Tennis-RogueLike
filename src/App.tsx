@@ -104,10 +104,33 @@ export default function App() {
           // Monotonic merge for shop done-flags: once a player is marked done, never unmark them.
           // This prevents a stale broadcast from the opponent overwriting our own done flag.
           if (prev.phase === "shop" && received.phase === "shop") {
+            const myId = onlineSession?.myPlayerId;
+            if (!myId) return received; // fallback safety
+
+            const oppId = myId === "p1" ? "p2" : "p1";
+
+            // Merge only opponent's shop changes
             const p1Done = prev.shopState.p1Done || received.shopState.p1Done;
             const p2Done = prev.shopState.p2Done || received.shopState.p2Done;
-            const merged: GameState = { ...received, shopState: { p1Done, p2Done } };
-            // Both done: transition to battle
+
+            const merged: GameState = {
+              ...prev,
+
+              // Keep my local state EXACTLY as-is
+              players: {
+                ...prev.players,
+                [oppId]: received.players[oppId],   // only update opponent
+              },
+
+              shopPool: {
+                ...prev.shopPool,
+                [oppId]: received.shopPool[oppId],  // only update opponent's shop pool
+              },
+
+              shopState: { p1Done, p2Done },
+            };
+
+            // If both done, transition to battle
             if (p1Done && p2Done) {
               return {
                 ...merged,
@@ -116,9 +139,13 @@ export default function App() {
                 roundGoldTotals: { p1: 0, p2: 0 },
               };
             }
+
             return merged;
           }
+
+          // Non-shop phases: trust full state
           return received;
+
         });
       } else if (msg.type === "partner_left" || msg.type === "partner_disconnected") {
         toast({ title: "Opponent Disconnected", description: "Your partner has disconnected." });
