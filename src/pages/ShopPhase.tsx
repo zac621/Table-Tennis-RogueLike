@@ -30,7 +30,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
     countUpgrade(upgrades, 'common-5') + countUpgrade(upgrades, 'legendary-3') * 3;
 
   const discount = getDiscount(player.upgrades);
-  const canRefresh = player.gold >= 5;
+  const canRefresh = player.gold >= 10;
 
   const hpPercent = Math.max(0, Math.min(100, (player.hp / player.maxHp) * 100));
   let hpColor = "bg-green-500";
@@ -199,7 +199,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
           data-testid="btn-refresh-shop"
         >
           <RefreshCw className="w-4 h-4" />
-          Refresh Shop (5g)
+          Refresh Shop (10g)
         </Button>
 
         <Button

@@ -23,11 +23,24 @@ void hasUpgrade;
 const initialPlayerState = (id: "p1" | "p2", name: string, maxHp: number): PlayerState => ({
   id, name, maxHp, hp: maxHp,
   gold: 5,
-  winStreak: 0, lossStreak: 0, totalWins: 0,
+  winStreak: 0,
+  lossStreak: 0,
+  totalWins: 0,
   upgrades: [],
   counterStrikeActive: false,
   vampireOverflow: 0,
+
+  // NEW FIELDS FOR PASSIVES
+  poisonChance: 0,
+  igniteChance: 0,
+
+  poisonTicks: 0,
+  igniteTicks: 0,
+
+  shield: 0,
+  healingReduction: false,
 });
+
 
 function buildExcludeList(upgrades: Upgrade[]): string[] {
   const exclude: string[] = [];
@@ -38,6 +51,16 @@ function buildExcludeList(upgrades: Upgrade[]): string[] {
 
   const shopDiscount = countUpgrade(upgrades, 'common-5') + countUpgrade(upgrades, 'legendary-3') * 3;
   if (shopDiscount >= 17) exclude.push('common-5', 'legendary-3');
+  
+  // Poison (common-7): stop offering at 100% chance
+  if (countUpgrade(upgrades, 'common-7') * 3 >= 100) {
+    exclude.push('common-7');
+  }
+
+  // Ignite (rare-10): stop offering at 100% chance
+  if (countUpgrade(upgrades, 'rare-10') * 5 >= 100) {
+    exclude.push('rare-10');
+  }
 
   return exclude;
 }
@@ -466,14 +489,14 @@ export default function App() {
   const handleShopRefresh = (playerId: "p1" | "p2") => {
     setGameState(prev => {
       const player = prev.players[playerId];
-      if (player.gold < 5) return prev;
+      if (player.gold < 10) return prev;
 
       const exclude = buildExcludeList(player.upgrades);
       const newState: GameState = {
         ...prev,
         players: {
           ...prev.players,
-          [playerId]: { ...player, gold: player.gold - 5 },
+          [playerId]: { ...player, gold: player.gold - 10 },
         },
         shopPool: {
           ...prev.shopPool,

@@ -24,7 +24,18 @@ export interface PlayerState {
   upgrades: Upgrade[];
   counterStrikeActive: boolean;
   vampireOverflow: number;
+
+  // --- NEW FIELDS FOR PASSIVES ---
+  poisonChance: number;        // % chance to apply Poison
+  igniteChance: number;        // % chance to apply Ignite
+
+  poisonTicks: number;         // remaining Poison DOT turns
+  igniteTicks: number;         // remaining Ignite DOT turns
+
+  shield: number;              // Shields Up: number of shields
+  healingReduction: boolean;   // Ignite effect: halves healing
 }
+
 
 export interface GoldBreakdown {
   base: number;

@@ -17,6 +17,19 @@ function createRng(seed: number) {
   };
 }
 
+function applyHealing(player: PlayerState, amount: number): number {
+  let healAmount = amount;
+
+  if (player.healingReduction) {
+    healAmount = Math.floor(healAmount / 2);
+  }
+
+  const actualHeal = Math.min(player.maxHp - player.hp, healAmount);
+  player.hp += actualHeal;
+
+  return actualHeal;
+}
+
 export function resolveRally(
   winner: PlayerState,
   loser: PlayerState,
@@ -24,6 +37,39 @@ export function resolveRally(
   const w = JSON.parse(JSON.stringify(winner)) as PlayerState;
   const l = JSON.parse(JSON.stringify(loser)) as PlayerState;
   
+  // --- DOT Effects (Poison & Ignite) ---
+
+    // Poison: 20% of CURRENT HP
+    if (w.poisonTicks > 0) {
+      w.poisonTicks--;
+      const dmg = Math.floor(w.hp * 0.20);
+      w.hp -= dmg;
+    }
+    if (l.poisonTicks > 0) {
+      l.poisonTicks--;
+      const dmg = Math.floor(l.hp * 0.20);
+      l.hp -= dmg;
+    }
+
+    // Ignite: 10% of MAX HP + healing reduction
+    if (w.igniteTicks > 0) {
+      w.igniteTicks--;
+      const dmg = Math.floor(w.maxHp * 0.10);
+      w.hp -= dmg;
+      w.healingReduction = true;
+    } else {
+      w.healingReduction = false;
+    }
+
+    if (l.igniteTicks > 0) {
+      l.igniteTicks--;
+      const dmg = Math.floor(l.maxHp * 0.10);
+      l.hp -= dmg;
+      l.healingReduction = true;
+    } else {
+      l.healingReduction = false;
+    }
+
   // Capture HP before the rally
   const hpBefore: Record<'p1' | 'p2', number> = {
   p1: winner.id === 'p1' ? winner.hp : loser.hp,
@@ -37,6 +83,18 @@ export function resolveRally(
   l.winStreak = 0;
   l.lossStreak += 1;
   w.totalWins += 1;
+
+  // --- Thorns (common-6): 1 damage every 3 losses ---
+  const thornsStacks = countUpgrade(l.upgrades, 'common-6');
+  if (thornsStacks > 0 && l.lossStreak % 3 === 0) {
+    w.hp -= thornsStacks; // ignores modifiers
+  }
+
+  // --- Shields Up (legendary-5): shield every 5 losses ---
+  const shieldsUpStacks = countUpgrade(l.upgrades, 'legendary-5');
+  if (shieldsUpStacks > 0 && l.lossStreak % 5 === 0) {
+    l.shield += shieldsUpStacks;
+  }
 
   // --- Damage Calculation ---
   let damage = 1;
@@ -83,7 +141,15 @@ export function resolveRally(
   damage = Math.max(1, damage - countUpgrade(l.upgrades, 'common-1'));
 
   // --- Apply Damage ---
-  l.hp -= damage;
+ // --- Shield Consumption ---
+if (l.shield > 0 && damage > 0) {
+  l.shield--;
+  damage = 0;
+}
+
+// --- Apply Damage ---
+l.hp -= damage;
+
 
   // --- Phoenix (epic-4): survive fatal, restore 10% max HP ---
   // --- Phoenix (epic-4): survive fatal, restore 10% max HP ---
@@ -109,13 +175,33 @@ if (l.hp <= 0 && hasUpgrade(l.upgrades, 'epic-4')) {
   }
 
   // --- Winner Healing ---
+  // --- Poison & Ignite Application on Rally Win ---
+
+// Poison (common-7): +3% per stack
+const poisonStacks = countUpgrade(w.upgrades, 'common-7');
+w.poisonChance = Math.min(100, poisonStacks * 3);
+
+// Ignite (rare-10): +5% per stack
+const igniteStacks = countUpgrade(w.upgrades, 'rare-10');
+w.igniteChance = Math.min(100, igniteStacks * 5);
+
+// Poison proc
+if (w.poisonChance > 0 && Math.random() * 100 < w.poisonChance) {
+  l.poisonTicks = 3; // refresh duration
+}
+
+// Ignite proc
+if (w.igniteChance > 0 && Math.random() * 100 < w.igniteChance) {
+  l.igniteTicks = 3; // refresh duration
+}
+
   let winnerHealAmount = 0;
 
   // Life Steal (legendary-2): heal winner by 2 per copy
   if (lifeStealCount > 0) {
     const heal = 2 * lifeStealCount;
-    w.hp = Math.min(w.maxHp, w.hp + heal);
-    winnerHealAmount += heal;
+    winnerHealAmount += applyHealing(w, heal);
+
   }
 
   // Vampire (epic-2): 1 HP per 2 damage dealt, overflow tracks across rallies
@@ -124,26 +210,26 @@ if (l.hp <= 0 && hasUpgrade(l.upgrades, 'epic-4')) {
     w.vampireOverflow = (w.vampireOverflow || 0) + damage;
     const heals = Math.floor(w.vampireOverflow / 2) * vampireCount;
     if (heals > 0) {
-      w.hp = Math.min(w.maxHp, w.hp + heals);
+      winnerHealAmount += applyHealing(w, heals);
       w.vampireOverflow = w.vampireOverflow % 2;
-      winnerHealAmount += heals;
     }
   }
+
 
   // Quick Heal (common-4): +1 HP per copy every 3 consecutive wins
   const quickHealCount = countUpgrade(w.upgrades, 'common-4');
   if (quickHealCount > 0 && w.winStreak > 0 && w.winStreak % 3 === 0) {
     const heal = quickHealCount;
-    w.hp = Math.min(w.maxHp, w.hp + heal);
-    winnerHealAmount += heal;
+    winnerHealAmount += applyHealing(w, heal);
+
   }
 
   // Battle Medic (rare-2): +2 HP per copy every 5 total wins
   const battleMedicCount = countUpgrade(w.upgrades, 'rare-2');
   if (battleMedicCount > 0 && w.totalWins > 0 && w.totalWins % 5 === 0) {
     const heal = 2 * battleMedicCount;
-    w.hp = Math.min(w.maxHp, w.hp + heal);
-    winnerHealAmount += heal;
+    winnerHealAmount += applyHealing(w, heal);
+
   }
 
   // --- Gold Calculation ---
