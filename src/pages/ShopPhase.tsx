@@ -144,7 +144,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                   whileTap={canAfford ? { scale: 0.95 } : {}}
                 >
                   <Card
-                    className={`relative w-64 h-80 flex flex-col p-6 transition-colors bg-card border ${
+                    className={`relative w-64 h-64 flex flex-col p-4 transition-colors bg-card border ${
                       canAfford
                         ? `cursor-pointer hover:border-primary glow-${u.rarity}`
                         : 'opacity-50 cursor-not-allowed'
