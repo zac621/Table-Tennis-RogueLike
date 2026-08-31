@@ -59,21 +59,21 @@ let dotDamageToWinner = 0;
 let dotDamageToLoser = 0;
 let thornsDamageToWinner = 0;
 
-// Poison DOT (20% of HP at start of rally)
+// Poison DOT (10% of HP at start of rally)
 if (w.poisonTicks > 0) {
   w.poisonTicks--;
-  dotDamageToWinner += Math.floor(hpBefore[w.id] * 0.20);
+  dotDamageToWinner += Math.floor(hpBefore[w.id] * 0.10);
 }
 if (l.poisonTicks > 0) {
   l.poisonTicks--;
-  dotDamageToLoser += Math.floor(hpBefore[l.id] * 0.20);
+  dotDamageToLoser += Math.floor(hpBefore[l.id] * 0.10);
 }
 
 
-// Ignite DOT (10% max HP + healing reduction)
+// Ignite DOT (5% max HP + healing reduction)
 if (w.igniteTicks > 0) {
   w.igniteTicks--;
-  dotDamageToWinner += Math.floor(w.maxHp * 0.10);
+  dotDamageToWinner += Math.floor(w.maxHp * 0.05);
   w.healingReduction = true;
 } else {
   w.healingReduction = false;
@@ -81,7 +81,7 @@ if (w.igniteTicks > 0) {
 
 if (l.igniteTicks > 0) {
   l.igniteTicks--;
-  dotDamageToLoser += Math.floor(l.maxHp * 0.10);
+  dotDamageToLoser += Math.floor(l.maxHp * 0.05);
   l.healingReduction = true;
 } else {
   l.healingReduction = false;
@@ -215,13 +215,13 @@ if (l.hp <= 0 && hasUpgrade(l.upgrades, 'epic-4')) {
   // --- Winner Healing ---
   // --- Poison & Ignite Application on Rally Win ---
 
-// Poison (common-7): +3% per stack
+// Poison (common-7): +1% per stack
 const poisonStacks = countUpgrade(w.upgrades, 'common-7');
-w.poisonChance = Math.min(100, poisonStacks * 3);
+w.poisonChance = Math.min(100, poisonStacks * 1);
 
-// Ignite (rare-10): +5% per stack
+// Ignite (rare-10): +1% per stack
 const igniteStacks = countUpgrade(w.upgrades, 'rare-10');
-w.igniteChance = Math.min(100, igniteStacks * 5);
+w.igniteChance = Math.min(100, igniteStacks * 1);
 
 // Poison proc
 if (w.poisonChance > 0 && Math.random() * 100 < w.poisonChance) {

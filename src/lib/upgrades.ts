@@ -5,7 +5,7 @@ export const COMMON_UPGRADES: Upgrade[] = [
   { id: 'rare-4',   name: 'Fortify',       rarity: 'common', cost: 5, description: 'Every 3 consecutive losses, gain +3 extra gold.' },
   { id: 'common-4', name: 'Quick Heal',    rarity: 'common', cost: 5, description: 'Recover 1 HP for every 3 consecutive wins.' },
   { id: 'common-6', name: 'Thorns',        rarity: 'common', cost: 5, description: 'Deals 1 damage every 3 consecutive losses, ignoring all modifiers.' },
-  { id: 'common-7', name: 'Poison',       rarity: 'common',  cost: 5, description: 'Rally wins have +3% chance to apply poison (20% current HP per rally for 3 rallies). Stacks to 100%.' },
+  { id: 'common-7', name: 'Poison',       rarity: 'common',  cost: 5, description: 'Rally wins have +1% chance to apply poison (10% current HP per rally for 3 rallies). Stacks to 20%.' },
 
 ];
 
@@ -18,7 +18,7 @@ export const RARE_UPGRADES: Upgrade[] = [
   { id: 'rare-5',   name: 'Momentum',      rarity: 'rare', cost: 15, description: 'Win streak gold bonuses are doubled. Unique — can only be owned once.' },
   { id: 'rare-6',   name: 'Dead Eye',      rarity: 'rare', cost: 15, description: 'Rally wins have a 20% crit chance (double damage). Each copy adds +20%, capped at 100%. Not offered once you hit the cap.' },
   { id: 'epic-3',   name: 'Treasury',      rarity: 'rare', cost: 15, description: 'Interest gold cap raised from 50 to 80 gold.' },
-  { id: 'rare-10',  name: 'Ignite',        rarity: 'rare', cost: 15, description: 'Rally wins have +5% chance to apply ignite (10% max HP per rally for 3 rallies, halves healing). Stacks to 100%.' },
+  { id: 'rare-10',  name: 'Ignite',        rarity: 'rare', cost: 15, description: 'Rally wins have +5% chance to apply ignite (5% max HP per rally for 3 rallies, halves healing). Stacks to 20%.' },
 
 ];
 
