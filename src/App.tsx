@@ -1,620 +1,175 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { GameState, PlayerState, Upgrade } from "./lib/types";
-import { drawUpgrades, resolveRally } from "./lib/gameLogic";
-import { buildWsUrl } from "@/lib/websocket";
-import { hasUpgrade, countUpgrade, applyUpgradeCombining } from "./lib/upgrades";
-import { useToast } from "@/hooks/use-toast";
+import type { ReactNode } from "react";
 import { motion } from "framer-motion";
-import { Clock } from "lucide-react";
+import { Clock, Loader2, WifiOff } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Toaster } from "@/components/ui/toaster";
+import { Button } from "@/components/ui/button";
+import { useGameConnection } from "./lib/connection";
+import { GameAction, PlayerId, Upgrade } from "./lib/types";
 
-import NameEntryScreen from "./pages/NameEntryScreen";
+import OnlineLobbyScreen from "./pages/OnlineLobbyScreen";
 import SetupScreen from "./pages/SetupScreen";
 import RallyDetermination from "./pages/RallyDetermination";
 import UpgradeDraft from "./pages/UpgradeDraft";
-import GameScreen from "./pages/GameScreen";
 import OnlineGameScreen from "./pages/OnlineGameScreen";
 import ShopPhase from "./pages/ShopPhase";
 import GameOver from "./pages/GameOver";
-import OnlineLobbyScreen from "./pages/OnlineLobbyScreen";
 
-// suppress unused import warning — hasUpgrade is used indirectly via gameLogic
-void hasUpgrade;
-
-const initialPlayerState = (id: "p1" | "p2", name: string, maxHp: number): PlayerState => ({
-  id, name, maxHp, hp: maxHp,
-  gold: 5,
-  winStreak: 0,
-  lossStreak: 0,
-  totalWins: 0,
-  upgrades: [],
-  counterStrikeActive: false,
-  vampireOverflow: 0,
-
-  // NEW FIELDS FOR PASSIVES
-  poisonChance: 0,
-  igniteChance: 0,
-
-  poisonTicks: 0,
-  igniteTicks: 0,
-
-  shield: 0,
-  healingReduction: false,
-});
-
-
-function buildExcludeList(upgrades: Upgrade[]): string[] {
-  const exclude: string[] = [];
-
-  if (upgrades.some(u => u.id === 'rare-5')) exclude.push('rare-5');
-  if (upgrades.some(u => u.id === 'epic-3')) exclude.push('epic-3');
-  if (countUpgrade(upgrades, 'rare-6') >= 5) exclude.push('rare-6');
-
-  const shopDiscount = countUpgrade(upgrades, 'common-5') + countUpgrade(upgrades, 'legendary-3') * 3;
-  if (shopDiscount >= 17) exclude.push('common-5', 'legendary-3');
-
-  // Poison (common-7): stop offering at 20% chance
-  if (countUpgrade(upgrades, 'common-7') * 1 >= 20) exclude.push('common-7');
-
-  // Ignite (rare-10): stop offering at 20% chance
-  if (countUpgrade(upgrades, 'rare-10') * 1 >= 20) exclude.push('rare-10');
-
- // ⭐ NEW: Shields Up (legendary-5) cap at 4 stacks
-  if (countUpgrade(upgrades, 'legendary-5') >= 4) {
-   exclude.push('legendary-5');
- }
-
-  // ⭐ NEW: Phoenix (epic-4) cap at 3 stacks
-  if (countUpgrade(upgrades, 'epic-4') >= 3) {
-   exclude.push('epic-4');
-  }
-
-  return exclude;
-}
-
-
-const makeInitialState = (): GameState => ({
-  phase: "name-entry",
-  players: {
-    p1: initialPlayerState("p1", "Player 1", 100),
-    p2: initialPlayerState("p2", "Player 2", 100),
-  },
-  servingPlayerId: null,
-  rallyNumber: 1,
-  ralliesPerRound: 5,
-  ralliesThisRound: 0,
-  lastRallyResult: null,
-  roundGoldTotals: { p1: 0, p2: 0 },
-  draftPool: [],
-  draftTurn: null,
-  shopPool: { p1: [], p2: [] },
-  shopState: { p1Done: false, p2Done: false },
-});
-
-interface OnlineSession {
-  myPlayerId: "p1" | "p2";
-  lobbyCode: string;
-  partnerName: string;
-  sessionToken: string;
+function CenteredMessage({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="min-h-screen flex flex-col items-center justify-center p-6 text-center gap-6"
+    >
+      {icon}
+      <h2 className="text-3xl font-bold text-primary">{title}</h2>
+      {children}
+    </motion.div>
+  );
 }
 
 export default function App() {
   const { toast } = useToast();
-  const [gameState, setGameState] = useState<GameState>(makeInitialState());
-  const [onlineSession, setOnlineSession] = useState<OnlineSession | null>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const manualCloseRef = useRef(false);
-  const reconnectAttemptsRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearReconnectTimer = () => {
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    reconnectAttemptsRef.current = 0;
-  };
-
-  // Broadcast current state to online partner (reads wsRef so never stale)
-  const broadcast = useCallback((state: GameState) => {
-    const sock = wsRef.current;
-    if (sock && sock.readyState === WebSocket.OPEN) {
-      sock.send(JSON.stringify({ type: "state_update", state }));
-    }
-  }, []);
-
-  // Listen for incoming state from partner
-  useEffect(() => {
-    if (!ws) return;
-    const handler = (event: MessageEvent) => {
-      const msg = JSON.parse(event.data as string) as { type: string; state?: GameState };
-      if (msg.type === "state_update" && msg.state) {
-        const received = msg.state;
-        setGameState(prev => {
-          // Monotonic merge for shop done-flags: once a player is marked done, never unmark them.
-          // This prevents a stale broadcast from the opponent overwriting our own done flag.
-          if (prev.phase === "shop" && received.phase === "shop") {
-            const myId = onlineSession?.myPlayerId;
-            if (!myId) return received; // fallback safety
-
-            const oppId = myId === "p1" ? "p2" : "p1";
-
-            // Merge only opponent's shop changes
-            const p1Done = prev.shopState.p1Done || received.shopState.p1Done;
-            const p2Done = prev.shopState.p2Done || received.shopState.p2Done;
-
-            const merged: GameState = {
-              ...prev,
-
-              // Keep my local state EXACTLY as-is
-              players: {
-                ...prev.players,
-                [oppId]: received.players[oppId],   // only update opponent
-              },
-
-              shopPool: {
-                ...prev.shopPool,
-                [oppId]: received.shopPool[oppId],  // only update opponent's shop pool
-              },
-
-              shopState: { p1Done, p2Done },
-            };
-
-            // If both done, transition to battle
-            if (p1Done && p2Done) {
-              return {
-                ...merged,
-                phase: "battle",
-                lastRallyResult: null,
-                roundGoldTotals: { p1: 0, p2: 0 },
-              };
-            }
-
-            return merged;
-          }
-
-          // Non-shop phases: trust full state
-          return received;
-
-        });
-      } else if (msg.type === "partner_left" || msg.type === "partner_disconnected") {
-        toast({ title: "Opponent Disconnected", description: "Your partner has disconnected." });
-      } else if (msg.type === "reconnect_success") {
-        toast({ title: "Reconnected", description: "Your online game connection has been restored." });
-      }
-    };
-    const closeHandler = () => {
-      if (manualCloseRef.current) return;
-      if (!onlineSession?.sessionToken || !onlineSession?.lobbyCode) return;
-      reconnectAttemptsRef.current += 1;
-      const delay = Math.min(5000, 1000 * reconnectAttemptsRef.current);
-      reconnectTimerRef.current = setTimeout(() => {
-        const socket = new WebSocket(buildWsUrl());
-        socket.onopen = () => {
-          reconnectAttemptsRef.current = 0;
-          socket.send(JSON.stringify({
-            type: "reconnect",
-            code: onlineSession.lobbyCode,
-            sessionToken: onlineSession.sessionToken,
-          }));
-          wsRef.current = socket;
-          setWs(socket);
-        };
-        socket.onerror = () => {
-          toast({ title: "Reconnect Failed", description: "Trying again..." });
-        };
-        socket.onclose = () => {
-          if (reconnectAttemptsRef.current < 5) return;
-          toast({ title: "Connection Lost", description: "Could not restore your online game." });
-        };
-      }, delay);
-    };
-
-    ws.addEventListener("message", handler);
-    ws.addEventListener("close", closeHandler);
-    return () => {
-      ws.removeEventListener("message", handler);
-      ws.removeEventListener("close", closeHandler);
-    };
-  }, [ws, toast, onlineSession]);
-
-  // ─── Online lobby ──────────────────────────────────────────────────────────
-
-  const handlePlayOnline = () => {
-    manualCloseRef.current = false;
-    clearReconnectTimer();
-    setGameState(prev => ({ ...prev, phase: "online-lobby" }));
-  };
-
-  const handleOnlineReady = (
-    socket: WebSocket,
-    myPlayerId: "p1" | "p2",
-    myName: string,
-    partnerName: string,
-    lobbyCode: string,
-    sessionToken: string
-  ) => {
-    wsRef.current = socket;
-    setWs(socket);
-    setOnlineSession({ myPlayerId, lobbyCode, partnerName, sessionToken });
-    clearReconnectTimer();
-
-    const p1Name = myPlayerId === "p1" ? myName : partnerName;
-    const p2Name = myPlayerId === "p2" ? myName : partnerName;
-
-    setGameState(prev => ({
-      ...prev,
-      // Host (p1) proceeds to setup; guest (p2) waits in online-lobby for host to broadcast state
-      phase: myPlayerId === "p1" ? "setup" : "online-lobby",
-      players: {
-        p1: { ...prev.players.p1, name: p1Name },
-        p2: { ...prev.players.p2, name: p2Name },
-      },
-    }));
-  };
-
-  const handleBackToLocal = () => {
-    manualCloseRef.current = true;
-    wsRef.current?.close();
-    wsRef.current = null;
-    setWs(null);
-    setOnlineSession(null);
-    clearReconnectTimer();
-    setGameState(prev => ({ ...prev, phase: "name-entry" }));
-  };
-
-  // ─── Local name entry ──────────────────────────────────────────────────────
-
-  const handleNamesEntered = (p1Name: string, p2Name: string) => {
-    setGameState(prev => ({
-      ...prev,
-      phase: "setup",
-      players: {
-        p1: { ...prev.players.p1, name: p1Name },
-        p2: { ...prev.players.p2, name: p2Name },
-      },
-    }));
-  };
-
-  // ─── Setup ─────────────────────────────────────────────────────────────────
-
-  const handleStartSetup = (hp: number, ralliesPerRound: number) => {
-    setGameState(prev => {
-      const newState: GameState = {
-        ...prev,
-        phase: "rally-determination",
-        ralliesPerRound,
-        players: {
-          p1: initialPlayerState("p1", prev.players.p1.name, hp),
-          p2: initialPlayerState("p2", prev.players.p2.name, hp),
-        },
-      };
-      broadcast(newState);
-      return newState;
-    });
-  };
-
-  // ─── Rally determination ───────────────────────────────────────────────────
-
-  const handleRallyWinner = (winnerId: "p1" | "p2") => {
-    setGameState(prev => {
-      const newState: GameState = {
-        ...prev,
-        servingPlayerId: winnerId,
-        phase: "upgrade-draft",
-        draftTurn: winnerId,
-        draftPool: drawUpgrades(3, Date.now(), "legendary"),
-      };
-      broadcast(newState);
-      return newState;
-    });
-  };
-
-  // ─── Upgrade draft ─────────────────────────────────────────────────────────
-
-  const handleDraftSelect = (upgrade: Upgrade, index: number) => {
-  setGameState(prev => {
-    if (!prev.servingPlayerId) return prev; // safety
-
-    const winnerId = prev.servingPlayerId;                 // rally winner
-    const loserId = winnerId === "p1" ? "p2" : "p1";       // rally loser
-
-    const activeId = prev.draftTurn!;                      // current drafter
-    const newPlayers = { ...prev.players };
-    newPlayers[activeId] = {
-      ...newPlayers[activeId],
-      upgrades: applyUpgradeCombining([...newPlayers[activeId].upgrades, upgrade]),
-    };
-
-    const newPool = prev.draftPool.filter((_, i) => i !== index);
-
-    let newState: GameState;
-
-    if (prev.draftTurn === winnerId) {
-      // Winner just picked → loser picks next from remaining pool
-      newState = {
-        ...prev,
-        players: newPlayers,
-        draftTurn: loserId,
-        draftPool: newPool,
-      };
-    } else {
-      // Loser just picked → both have picked → go to battle
-      newState = {
-        ...prev,
-        players: newPlayers,
-        phase: "battle",
-      };
-    }
-
-    broadcast(newState);
-    return newState;
+  const conn = useGameConnection({
+    onRejected: (message) => toast({ title: "Action not allowed", description: message }),
   });
-};
+  const { status, session, gameState, partner } = conn;
 
-
-  // ─── Battle (rally-based) ──────────────────────────────────────────────────
-
-  const handleBattleWin = (winnerId: "p1" | "p2") => {
-    setGameState(prev => {
-      const loserId = winnerId === "p1" ? "p2" : "p1";
-      const { winner, loser, result } = resolveRally(prev.players[winnerId], prev.players[loserId]);
-
-      const newPlayers = { ...prev.players };
-      newPlayers[winnerId] = winner;
-      newPlayers[loserId] = loser;
-
-      const newRallyNumber = prev.rallyNumber + 1;
-      const newRalliesThisRound = prev.ralliesThisRound + 1;
-      const newServing: "p1" | "p2" = prev.servingPlayerId === "p1" ? "p2" : "p1";
-
-      // Check game-over (hp ≤ 0 after Phoenix resolution)
-      if (newPlayers.p1.hp <= 0 || newPlayers.p2.hp <= 0) {
-        const newState: GameState = { ...prev, players: newPlayers, lastRallyResult: result, phase: "game-over" };
-        broadcast(newState);
-        return newState;
-      }
-
-      // Eternal Flame (legendary-4): +2 HP per copy after every rally
-      const ef1 = countUpgrade(newPlayers.p1.upgrades, "legendary-4") * 2;
-      if (ef1 > 0) newPlayers.p1 = { ...newPlayers.p1, hp: Math.min(newPlayers.p1.maxHp, newPlayers.p1.hp + ef1) };
-      const ef2 = countUpgrade(newPlayers.p2.upgrades, "legendary-4") * 2;
-      if (ef2 > 0) newPlayers.p2 = { ...newPlayers.p2, hp: Math.min(newPlayers.p2.maxHp, newPlayers.p2.hp + ef2) };
-
-      const fullResult = ef1 > 0 || ef2 > 0 ? {
-        ...result,
-        healAmounts: { p1: result.healAmounts.p1 + ef1, p2: result.healAmounts.p2 + ef2 },
-      } : result;
-
-      const newRoundGoldTotals: Record<"p1" | "p2", number> = {
-        p1: prev.roundGoldTotals.p1 + result.goldEarned.p1.total,
-        p2: prev.roundGoldTotals.p2 + result.goldEarned.p2.total,
-      };
-
-      const goToShop = newRalliesThisRound >= prev.ralliesPerRound;
-
-      let newState: GameState;
-      if (goToShop) {
-        const p1Exclude = buildExcludeList(newPlayers.p1.upgrades);
-        const p2Exclude = buildExcludeList(newPlayers.p2.upgrades);
-        newState = {
-          ...prev,
-          players: newPlayers,
-          lastRallyResult: fullResult,
-          roundGoldTotals: newRoundGoldTotals,
-          rallyNumber: newRallyNumber,
-          ralliesThisRound: 0,
-          servingPlayerId: newServing,
-          phase: "shop",
-          shopState: { p1Done: false, p2Done: false },
-          shopPool: {
-            p1: drawUpgrades(3, Date.now(), null, p1Exclude),
-            p2: drawUpgrades(3, Date.now() + 1, null, p2Exclude),
-          },
-        };
-      } else {
-        newState = {
-          ...prev,
-          players: newPlayers,
-          lastRallyResult: fullResult,
-          roundGoldTotals: newRoundGoldTotals,
-          rallyNumber: newRallyNumber,
-          ralliesThisRound: newRalliesThisRound,
-          servingPlayerId: newServing,
-          phase: "battle",
-        };
-      }
-
-      broadcast(newState);
-      return newState;
-    });
+  const send = (action: GameAction) => {
+    if (!conn.sendAction(action)) {
+      toast({ title: "Not connected", description: "Reconnecting to the server — try again in a moment." });
+      return false;
+    }
+    return true;
   };
 
-  // ─── Shop ──────────────────────────────────────────────────────────────────
+  const renderGame = () => {
+    // No lobby yet, or the host is waiting for an opponent to join.
+    if (!session || (!gameState && !partner.joined && status !== "reconnecting")) {
+      return (
+        <OnlineLobbyScreen
+          status={status}
+          lobbyCode={session?.code ?? null}
+          error={conn.error}
+          onCreate={conn.createLobby}
+          onJoin={conn.joinLobby}
+          onCancel={conn.leave}
+        />
+      );
+    }
 
-  const handleShopBuy = (playerId: "p1" | "p2", upgrade: Upgrade) => {
-    setGameState(prev => {
-      const newPlayers = { ...prev.players };
-      const player = { ...newPlayers[playerId] };
+    if (!gameState) {
+      return (
+        <CenteredMessage icon={<Loader2 className="w-12 h-12 text-primary animate-spin" />} title="Reconnecting…">
+          <p className="text-muted-foreground">Restoring your game <span className="font-bold tracking-widest">{session.code}</span></p>
+          <Button variant="outline" onClick={conn.leave}>Leave game</Button>
+        </CenteredMessage>
+      );
+    }
 
-      const discountCount =
-        countUpgrade(player.upgrades, "common-5") +
-        countUpgrade(player.upgrades, "legendary-3") * 3;
-      const finalCost = Math.max(1, upgrade.cost - discountCount);
+    const myId: PlayerId = session.playerId;
+    const opponentName = gameState.players[myId === "p1" ? "p2" : "p1"].name;
 
-      if (player.gold < finalCost) return prev;
+    switch (gameState.phase) {
+      case "setup":
+        return myId === "p1" ? (
+          <SetupScreen
+            p1Name={gameState.players.p1.name}
+            p2Name={gameState.players.p2.name}
+            onStart={(hp, ralliesPerRound) => send({ type: "start_game", hp, ralliesPerRound })}
+          />
+        ) : (
+          <CenteredMessage icon={<Clock className="w-12 h-12 text-primary animate-pulse" />} title="Lobby Connected!">
+            <p className="text-muted-foreground text-lg">
+              Waiting for <span className="text-foreground font-bold">{opponentName}</span> to configure and start the game…
+            </p>
+            <p className="text-xs text-muted-foreground">Code: <span className="font-bold tracking-widest">{session.code}</span></p>
+          </CenteredMessage>
+        );
 
-      player.gold -= finalCost;
-      // Apply combining after adding — combined upgrades retain full stack power
-      player.upgrades = applyUpgradeCombining([...player.upgrades, upgrade]);
-      newPlayers[playerId] = player;
+      case "rally-determination":
+        return (
+          <RallyDetermination
+            p1Name={gameState.players.p1.name}
+            p2Name={gameState.players.p2.name}
+            myPlayerId={myId}
+            onWinner={(winnerId) => send({ type: "first_rally_winner", winnerId })}
+          />
+        );
 
-      const newPool = upgrade.instanceId
-        ? prev.shopPool[playerId].filter(u => u.instanceId !== upgrade.instanceId)
-        : prev.shopPool[playerId].filter(u => u !== upgrade);
+      case "upgrade-draft":
+        return (
+          <UpgradeDraft
+            pool={gameState.draftPool}
+            draftTurn={gameState.draftTurn!}
+            p1Name={gameState.players.p1.name}
+            p2Name={gameState.players.p2.name}
+            myPlayerId={myId}
+            onSelect={(upgrade: Upgrade) => send({ type: "draft_pick", instanceId: upgrade.instanceId! })}
+          />
+        );
 
-      toast({ title: "Upgrade Purchased", description: `${player.name} bought ${upgrade.name}` });
+      case "battle":
+        return (
+          <OnlineGameScreen
+            state={gameState}
+            myPlayerId={myId}
+            onWin={() => send({ type: "rally_win", rallyNumber: gameState.rallyNumber })}
+          />
+        );
 
-      const newState: GameState = {
-        ...prev,
-        players: newPlayers,
-        shopPool: { ...prev.shopPool, [playerId]: newPool },
-      };
-      broadcast(newState);
-      return newState;
-    });
+      case "shop":
+        return (
+          <ShopPhase
+            state={gameState}
+            myPlayerId={myId}
+            onBuy={(upgrade) => {
+              if (send({ type: "shop_buy", instanceId: upgrade.instanceId! })) {
+                toast({ title: "Upgrade Purchased", description: `You bought ${upgrade.name}` });
+              }
+            }}
+            onDone={() => send({ type: "shop_done" })}
+            onRefresh={() => send({ type: "shop_refresh" })}
+          />
+        );
+
+      case "game-over":
+        return (
+          <GameOver
+            state={gameState}
+            onRematch={() => send({ type: "rematch" })}
+            onLeave={conn.leave}
+          />
+        );
+    }
   };
 
-  const handleShopDone = (playerId: "p1" | "p2") => {
-    setGameState(prev => {
-      const newShopState = { ...prev.shopState };
-      if (playerId === "p1") newShopState.p1Done = true;
-      else newShopState.p2Done = true;
-
-      let newState: GameState;
-      if (newShopState.p1Done && newShopState.p2Done) {
-        if (prev.players.p1.hp <= 0 || prev.players.p2.hp <= 0) {
-          newState = { ...prev, shopState: newShopState, phase: "game-over" };
-        } else {
-          newState = {
-            ...prev,
-            shopState: newShopState,
-            phase: "battle",
-            lastRallyResult: null,
-            roundGoldTotals: { p1: 0, p2: 0 },
-          };
-        }
-      } else {
-        newState = { ...prev, shopState: newShopState };
-      }
-
-      broadcast(newState);
-      return newState;
-    });
-  };
-
-  const handleShopRefresh = (playerId: "p1" | "p2") => {
-    setGameState(prev => {
-      const player = prev.players[playerId];
-      if (player.gold < 10) return prev;
-
-      const exclude = buildExcludeList(player.upgrades);
-      const newState: GameState = {
-        ...prev,
-        players: {
-          ...prev.players,
-          [playerId]: { ...player, gold: player.gold - 10 },
-        },
-        shopPool: {
-          ...prev.shopPool,
-          [playerId]: drawUpgrades(3, Date.now(), null, exclude),
-        },
-      };
-      broadcast(newState);
-      return newState;
-    });
-  };
-
-  // ─── Reset ─────────────────────────────────────────────────────────────────
-
-  const resetGame = () => {
-    manualCloseRef.current = true;
-    wsRef.current?.close();
-    wsRef.current = null;
-    setWs(null);
-    setOnlineSession(null);
-    clearReconnectTimer();
-    setGameState(makeInitialState());
-  };
-
-  // ─── Render ────────────────────────────────────────────────────────────────
+  const showReconnectOverlay = !!session && !!gameState && status !== "connected";
+  const showPartnerBanner = !!gameState && status === "connected" && partner.joined && !partner.connected;
 
   return (
     <div className="dark bg-background text-foreground min-h-screen">
-
-      {gameState.phase === "name-entry" && (
-        <NameEntryScreen onNext={handleNamesEntered} onPlayOnline={handlePlayOnline} />
+      {showPartnerBanner && (
+        <div className="sticky top-0 z-40 bg-yellow-500/15 border-b border-yellow-500/40 text-yellow-300 text-sm text-center px-4 py-2 flex items-center justify-center gap-2">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          {partner.name ?? "Your opponent"} disconnected — waiting for them to reconnect…
+        </div>
       )}
 
-      {/* Online lobby — setup phase */}
-      {gameState.phase === "online-lobby" && !onlineSession && (
-        <OnlineLobbyScreen onReady={handleOnlineReady} onBack={handleBackToLocal} />
+      {renderGame()}
+
+      {/* Block input while our own socket is down so taps aren't silently lost. */}
+      {showReconnectOverlay && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <Loader2 className="w-10 h-10 text-primary animate-spin" />
+          <p className="text-xl font-bold">Connection lost — reconnecting…</p>
+          <p className="text-sm text-muted-foreground">Your game is saved on the server.</p>
+          <Button variant="outline" onClick={conn.leave}>Leave game</Button>
+        </div>
       )}
 
-      {/* Online lobby — guest waiting for host to start */}
-      {gameState.phase === "online-lobby" && onlineSession && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="min-h-screen flex flex-col items-center justify-center p-6 text-center gap-6"
-        >
-          <Clock className="w-12 h-12 text-primary animate-pulse" />
-          <h2 className="text-3xl font-bold text-primary">Lobby Connected!</h2>
-          <p className="text-muted-foreground text-lg">
-            Waiting for <span className="text-foreground font-bold">{onlineSession.partnerName}</span> to configure and start the game…
-          </p>
-          <p className="text-xs text-muted-foreground">Code: <span className="font-bold tracking-widest">{onlineSession.lobbyCode}</span></p>
-        </motion.div>
-      )}
-
-      {gameState.phase === "setup" && (
-        <SetupScreen
-          p1Name={gameState.players.p1.name}
-          p2Name={gameState.players.p2.name}
-          onStart={handleStartSetup}
-          isOnline={onlineSession !== null}
-        />
-      )}
-
-      {gameState.phase === "rally-determination" && (
-        <RallyDetermination
-          p1Name={gameState.players.p1.name}
-          p2Name={gameState.players.p2.name}
-          onWinner={handleRallyWinner}
-        />
-      )}
-
-      {gameState.phase === "upgrade-draft" && (
-        <UpgradeDraft
-          pool={gameState.draftPool}
-          draftTurn={gameState.draftTurn!}
-          p1Name={gameState.players.p1.name}
-          p2Name={gameState.players.p2.name}
-          myPlayerId={onlineSession?.myPlayerId}
-          onSelect={handleDraftSelect}
-        />
-      )}
-
-      {/* Online battle: each player has their own "I Won" button */}
-      {gameState.phase === "battle" && onlineSession && (
-        <OnlineGameScreen
-          state={gameState}
-          myPlayerId={onlineSession.myPlayerId}
-          onWin={handleBattleWin}
-        />
-      )}
-
-      {/* Local battle: shared screen with two buttons */}
-      {gameState.phase === "battle" && !onlineSession && (
-        <GameScreen
-          state={gameState}
-          onWin={handleBattleWin}
-        />
-      )}
-
-      {gameState.phase === "shop" && (
-        <ShopPhase
-          state={gameState}
-          onBuy={handleShopBuy}
-          onDone={handleShopDone}
-          onRefresh={handleShopRefresh}
-          myPlayerId={onlineSession?.myPlayerId}
-        />
-      )}
-
-      {gameState.phase === "game-over" && (
-        <GameOver state={gameState} onReset={resetGame} />
-      )}
+      <Toaster />
     </div>
   );
 }

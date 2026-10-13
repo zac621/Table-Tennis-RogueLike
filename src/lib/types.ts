@@ -1,4 +1,6 @@
-export type Phase = 'name-entry' | 'setup' | 'rally-determination' | 'upgrade-draft' | 'battle' | 'shop' | 'game-over' | 'online-lobby';
+export type Phase = 'setup' | 'rally-determination' | 'upgrade-draft' | 'battle' | 'shop' | 'game-over';
+
+export type PlayerId = 'p1' | 'p2';
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
@@ -67,6 +69,7 @@ export interface RallyResult {
   goldEarned: Record<'p1' | 'p2', GoldBreakdown>;
   combatEvents: CombatEvent[];
   hpBefore: Record<'p1' | 'p2', number>;
+  phoenixTriggered?: Record<'p1' | 'p2', boolean>;
 }
 
 export interface GameState {
@@ -83,3 +86,15 @@ export interface GameState {
   shopPool: Record<'p1' | 'p2', Upgrade[]>;
   shopState: { p1Done: boolean; p2Done: boolean };
 }
+
+// Intents a client sends to the server. The server validates and applies them
+// with applyAction() in shared/engine.js, then broadcasts the new GameState.
+export type GameAction =
+  | { type: 'start_game'; hp: number; ralliesPerRound: number }
+  | { type: 'first_rally_winner'; winnerId: PlayerId }
+  | { type: 'draft_pick'; instanceId: string }
+  | { type: 'rally_win'; rallyNumber: number }
+  | { type: 'shop_buy'; instanceId: string }
+  | { type: 'shop_refresh' }
+  | { type: 'shop_done' }
+  | { type: 'rematch' };

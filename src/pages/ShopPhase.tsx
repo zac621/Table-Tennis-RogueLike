@@ -2,43 +2,35 @@ import { GameState, Upgrade } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
-import { countUpgrade } from "../lib/upgrades";
+import { buildExcludeList, finalCost, REFRESH_COST } from "../../shared/engine.js";
 import { RefreshCw, Heart, Coins, Clock } from "lucide-react";
 
 interface Props {
   state: GameState;
-  onBuy: (playerId: 'p1' | 'p2', upgrade: Upgrade) => void;
-  onDone: (playerId: 'p1' | 'p2') => void;
-  onRefresh: (playerId: 'p1' | 'p2') => void;
-  myPlayerId?: 'p1' | 'p2'; // online mode: lock shop to this player
+  onBuy: (upgrade: Upgrade) => void;
+  onDone: () => void;
+  onRefresh: () => void;
+  myPlayerId: 'p1' | 'p2';
 }
 
 export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId }: Props) {
-  // In online mode, always show MY shop. In local mode, show P1 first then P2.
-  const localActiveId: 'p1' | 'p2' = !state.shopState.p1Done ? 'p1' : 'p2';
-  const activeId: 'p1' | 'p2' = myPlayerId ?? localActiveId;
-
-  const myDone = myPlayerId
-    ? (myPlayerId === 'p1' ? state.shopState.p1Done : state.shopState.p2Done)
-    : false;
+  const activeId = myPlayerId;
+  const myDone = myPlayerId === 'p1' ? state.shopState.p1Done : state.shopState.p2Done;
 
   const player = state.players[activeId];
   const pool = state.shopPool[activeId];
   const roundGold = state.roundGoldTotals[activeId];
 
-  const getDiscount = (upgrades: Upgrade[]) =>
-    countUpgrade(upgrades, 'common-5') + countUpgrade(upgrades, 'legendary-3') * 3;
-
-  const discount = getDiscount(player.upgrades);
-  const canRefresh = player.gold >= 10;
+  const excluded = buildExcludeList(player.upgrades);
+  const canRefresh = player.gold >= REFRESH_COST;
 
   const hpPercent = Math.max(0, Math.min(100, (player.hp / player.maxHp) * 100));
   let hpColor = "bg-green-500";
   if (hpPercent < 50) hpColor = "bg-yellow-500";
   if (hpPercent < 25) hpColor = "bg-red-500";
 
-  // Online mode: show waiting screen when I've already clicked Done
-  if (myPlayerId && myDone) {
+  // Show waiting screen once I've clicked Done
+  if (myDone) {
     const other = state.players[myPlayerId === 'p1' ? 'p2' : 'p1'];
     return (
       <motion.div
@@ -83,7 +75,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
         <div className="bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
           <h3 className="text-2xl font-bold">
             {player.name}'s Turn
-            {myPlayerId && <span className="ml-2 text-sm text-green-400 font-normal">(you)</span>}
+            <span className="ml-2 text-sm text-green-400 font-normal">(you)</span>
           </h3>
 
           {/* HP Bar */}
@@ -131,8 +123,9 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
             </motion.p>
           ) : (
             pool.map((u, i) => {
-              const finalCost = Math.max(1, u.cost - discount);
-              const canAfford = player.gold >= finalCost;
+              const cost = finalCost(u, player.upgrades);
+              const maxed = excluded.includes(u.id);
+              const canAfford = !maxed && player.gold >= cost;
 
               return (
                 <motion.div
@@ -152,13 +145,13 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                         ? `cursor-pointer hover:border-primary glow-${u.rarity}`
                         : 'opacity-50 cursor-not-allowed'
                     } border-border`}
-                    onClick={() => canAfford && onBuy(activeId, u)}
+                    onClick={() => canAfford && onBuy(u)}
                     data-testid={`shop-item-${u.id}`}
                   >
                     <div className="flex justify-between items-start mb-4">
                       <h3 className={`font-bold text-lg text-glow-${u.rarity}`}>{u.name}</h3>
                       <span className="font-bold text-yellow-500 bg-background px-2 py-1 rounded border border-border text-sm whitespace-nowrap">
-                        {finalCost}g
+                        {cost}g
                       </span>
                     </div>
 
@@ -180,7 +173,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                     )}
                     {!canAfford && (
                       <div className="absolute inset-0 flex items-center justify-center bg-background/60 rounded-xl font-bold text-destructive text-xl z-10">
-                        Too Expensive
+                        {maxed ? 'Maxed Out' : 'Too Expensive'}
                       </div>
                     )}
                   </Card>
@@ -197,16 +190,16 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
           variant="outline"
           size="lg"
           className={`gap-2 font-semibold ${!canRefresh ? 'opacity-40 cursor-not-allowed' : ''}`}
-          onClick={() => canRefresh && onRefresh(activeId)}
+          onClick={() => canRefresh && onRefresh()}
           disabled={!canRefresh}
           data-testid="btn-refresh-shop"
         >
           <RefreshCw className="w-4 h-4" />
-          Refresh Shop (10g)
+          Refresh Shop ({REFRESH_COST}g)
         </Button>
 
         <Button
-          onClick={() => onDone(activeId)}
+          onClick={() => onDone()}
           variant="secondary"
           size="lg"
           className="w-48 font-bold text-lg"

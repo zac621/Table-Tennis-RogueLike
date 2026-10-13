@@ -9,10 +9,9 @@ interface Props {
   p1Name: string;
   p2Name: string;
   onStart: (hp: number, ralliesPerRound: number) => void;
-  isOnline?: boolean;
 }
 
-export default function SetupScreen({ p1Name, p2Name, onStart, isOnline }: Props) {
+export default function SetupScreen({ p1Name, p2Name, onStart }: Props) {
   const [hp, setHp] = useState(100);
   const [ralliesPerRound, setRalliesPerRound] = useState(5);
 
@@ -33,9 +32,7 @@ export default function SetupScreen({ p1Name, p2Name, onStart, isOnline }: Props
             <span className="text-foreground font-semibold">{p1Name}</span>
             {" vs "}
             <span className="text-foreground font-semibold">{p2Name}</span>
-            {isOnline && (
-              <span className="ml-2 text-xs text-green-400 font-bold">● Online</span>
-            )}
+            <span className="ml-2 text-xs text-green-400 font-bold">● Online</span>
           </p>
         </CardHeader>
         <CardContent className="space-y-8 pt-6">
@@ -77,7 +74,7 @@ export default function SetupScreen({ p1Name, p2Name, onStart, isOnline }: Props
             size="lg"
             data-testid="button-start-game"
           >
-            {isOnline ? "Start Online Game" : "Start Game"}
+            Start Online Game
           </Button>
         </CardContent>
       </Card>
