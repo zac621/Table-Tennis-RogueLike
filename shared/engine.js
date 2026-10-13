@@ -468,6 +468,69 @@ export function createPlayer(id, name, maxHp) {
   };
 }
 
+// ─── Match stats ──────────────────────────────────────────────────────────────
+// Whole-game totals per player, shown on the game-over screen. The rally log
+// only keeps the last few rallies, so these are accumulated as the game goes.
+
+export function createPlayerStats() {
+  return {
+    rallyWins: 0,
+    longestWinStreak: 0,
+    damageDealt: 0,      // HP the opponent lost because of this player (hits, Poison/Ignite, Thorns)
+    damageTaken: 0,
+    biggestHit: 0,       // largest single rally hit (after the opponent's blocks)
+    biggestHitRally: null,
+    biggestHitCrit: false,
+    crits: 0,
+    healingDone: 0,
+    damageBlocked: 0,    // Iron Defense + shields
+    shieldsUsed: 0,
+    dotDamage: 0,        // Poison + Ignite damage inflicted (before the opponent's blocks)
+    thornsDamage: 0,
+    phoenixRevives: 0,
+    goldEarned: 0,
+    goldStolen: 0,
+    goldSpent: 0,
+    upgradesBought: 0,
+    shopRefreshes: 0,
+  };
+}
+
+const freshStats = () => ({ p1: createPlayerStats(), p2: createPlayerStats() });
+
+function addRallyToStats(stats, result, players) {
+  const next = { p1: { ...stats.p1 }, p2: { ...stats.p2 } };
+  const w = next[result.winnerId];
+  const sum = (filter) => result.combatEvents.filter(filter).reduce((a, e) => a + e.amount, 0);
+
+  w.rallyWins += 1;
+  w.longestWinStreak = Math.max(w.longestWinStreak, players[result.winnerId].winStreak);
+  if (result.isCrit) w.crits += 1;
+  if (result.damageDealt > w.biggestHit) {
+    w.biggestHit = result.damageDealt;
+    w.biggestHitRally = result.rallyNumber ?? null;
+    w.biggestHitCrit = result.isCrit;
+  }
+
+  for (const id of ['p1', 'p2']) {
+    const me = next[id];
+    const opp = next[other(id)];
+    // Every point of damage a player takes is caused by their opponent.
+    me.damageTaken += result.damageTaken[id];
+    opp.damageDealt += result.damageTaken[id];
+    opp.dotDamage += sum(e => e.targetId === id && e.category === 'damage' && (e.source === 'Poison' || e.source === 'Ignite'));
+    opp.thornsDamage += sum(e => e.targetId === id && e.source === 'Thorns');
+    me.healingDone += result.healAmounts[id];
+    me.damageBlocked += sum(e => e.targetId === id && e.category === 'mitigation');
+    me.shieldsUsed += result.combatEvents.filter(e => e.targetId === id && e.source === 'Shield').length;
+    me.phoenixRevives += result.combatEvents.filter(e => e.targetId === id && e.source === 'Phoenix').length;
+    const stolen = sum(e => e.targetId === id && e.category === 'gold');
+    me.goldStolen += stolen;
+    me.goldEarned += result.goldEarned[id].total + stolen;
+  }
+  return next;
+}
+
 export function createInitialState(p1Name, p2Name) {
   return {
     phase: 'setup',
@@ -486,6 +549,7 @@ export function createInitialState(p1Name, p2Name) {
     shopPool: { p1: [], p2: [] },
     shopState: { p1Done: false, p2Done: false },
     rallyLog: [],
+    matchStats: freshStats(),
   };
 }
 
@@ -597,6 +661,7 @@ export function applyAction(state, actorId, action) {
             },
           },
           shopPool: { ...state.shopPool, [actorId]: pool.filter(u => u !== upgrade) },
+          matchStats: bumpStats(state, actorId, { goldSpent: cost, upgradesBought: 1 }),
         },
       };
     }
@@ -614,6 +679,7 @@ export function applyAction(state, actorId, action) {
             ...state.shopPool,
             [actorId]: drawUpgrades(3, null, buildExcludeList(player.upgrades)),
           },
+          matchStats: bumpStats(state, actorId, { goldSpent: REFRESH_COST, shopRefreshes: 1 }),
         },
       };
     }
@@ -645,6 +711,13 @@ export function applyAction(state, actorId, action) {
   }
 }
 
+function bumpStats(state, id, deltas) {
+  const stats = state.matchStats ?? freshStats();
+  const mine = { ...stats[id] };
+  for (const [k, v] of Object.entries(deltas)) mine[k] += v;
+  return { ...stats, [id]: mine };
+}
+
 const RALLY_LOG_SIZE = 10;
 
 function resolveRallyWin(state, winnerId) {
@@ -660,7 +733,15 @@ function resolveRallyWin(state, winnerId) {
   const withLog = (r) => [...(state.rallyLog ?? []), r].slice(-RALLY_LOG_SIZE);
 
   if (players.p1.hp <= 0 || players.p2.hp <= 0) {
-    return { ...state, players, rallyNumber, lastRallyResult: result, rallyLog: withLog(result), phase: 'game-over' };
+    return {
+      ...state,
+      players,
+      rallyNumber,
+      lastRallyResult: result,
+      rallyLog: withLog(result),
+      matchStats: addRallyToStats(state.matchStats ?? freshStats(), result, players),
+      phase: 'game-over',
+    };
   }
 
   // Eternal Flame (legendary-4): +2 HP per copy after every rally
@@ -691,6 +772,7 @@ function resolveRallyWin(state, winnerId) {
     players,
     lastRallyResult,
     rallyLog: withLog(lastRallyResult),
+    matchStats: addRallyToStats(state.matchStats ?? freshStats(), lastRallyResult, players),
     roundGoldTotals,
     rallyNumber,
     servingPlayerId,

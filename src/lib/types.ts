@@ -90,6 +90,29 @@ export interface GameState {
   shopPool: Record<'p1' | 'p2', Upgrade[]>;
   shopState: { p1Done: boolean; p2Done: boolean };
   rallyLog: RallyResult[]; // most recent last, capped on the server
+  matchStats: Record<'p1' | 'p2', PlayerStats>; // whole-game totals
+}
+
+export interface PlayerStats {
+  rallyWins: number;
+  longestWinStreak: number;
+  damageDealt: number;   // HP the opponent lost because of this player (hits, Poison/Ignite, Thorns)
+  damageTaken: number;
+  biggestHit: number;
+  biggestHitRally: number | null;
+  biggestHitCrit: boolean;
+  crits: number;
+  healingDone: number;
+  damageBlocked: number; // Iron Defense + shields
+  shieldsUsed: number;
+  dotDamage: number;     // Poison + Ignite damage inflicted
+  thornsDamage: number;
+  phoenixRevives: number;
+  goldEarned: number;
+  goldStolen: number;
+  goldSpent: number;
+  upgradesBought: number;
+  shopRefreshes: number;
 }
 
 // Intents a client sends to the server. The server validates and applies them
