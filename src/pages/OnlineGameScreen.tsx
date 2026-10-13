@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { GameState, RallyResult, Upgrade } from "../lib/types";
+import { GameState, PlayerState, RallyResult } from "../lib/types";
 import { motion, AnimatePresence } from "framer-motion";
-import { Coins, Trophy } from "lucide-react";
+import { Coins, ScrollText, Trophy } from "lucide-react";
+import AbilityList from "@/components/game/AbilityList";
+import StatusChips from "@/components/game/StatusChips";
+import RallyBanner, { HpDelta } from "@/components/game/RallyBanner";
+import BottomSheet from "@/components/game/BottomSheet";
+import CombatLog from "@/components/game/CombatLog";
 
 interface Props {
   state: GameState;
@@ -34,82 +39,6 @@ function StreakBadge({ winStreak, lossStreak }: { winStreak: number; lossStreak:
     return <span className="font-black text-red-400 text-lg leading-none tabular-nums">{lossStreak}L</span>;
   return <span className="text-muted-foreground text-sm">—</span>;
 }
-
-// ── Upgrade pills with "+N…" overflow ────────────────────────────────────────
-
-function UpgradeList({ upgrades }: { upgrades: Upgrade[] }) {
-  const [showExtra, setShowExtra] = useState(false);
-  const MAX = 8;
-  const visible = upgrades.slice(0, MAX);
-  const extra = upgrades.slice(MAX);
-
-  return (
-    <div className="flex flex-wrap gap-1 items-center min-h-5">
-      {upgrades.length === 0 && (
-        <span className="text-xs text-muted-foreground italic">No upgrades yet</span>
-      )}
-
-      {/* ⭐ Visible upgrades */}
-      {visible.map((u, i) => (
-        <span
-          key={u.instanceId ?? `${u.id}-${i}`}
-          title={`${u.rarity.toUpperCase()} — ${u.description}`}
-          className={`text-xs px-1.5 py-0.5 rounded border bg-background text-glow-${u.rarity} glow-${u.rarity} cursor-help select-none`}
-        >
-          {u.name}
-          {u.stackCount && u.stackCount > 1 && (
-            <span className={`ml-1 font-semibold text-glow-${u.rarity} opacity-90`}>
-              ×{u.stackCount}
-            </span>
-          )}
-        </span>
-      ))}
-
-      {/* ⭐ Overflow button */}
-      {extra.length > 0 && (
-        <div className="relative">
-          <button
-            className="text-xs px-1.5 py-0.5 rounded border border-muted-foreground/40 text-muted-foreground select-none"
-            onMouseEnter={() => setShowExtra(true)}
-            onMouseLeave={() => setShowExtra(false)}
-            onTouchStart={(e) => { e.stopPropagation(); setShowExtra(v => !v); }}
-          >
-            +{extra.length}…
-          </button>
-
-          {/* ⭐ Overflow popup */}
-          <AnimatePresence>
-            {showExtra && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.12 }}
-                className="absolute bottom-full left-0 mb-1 bg-card border border-border rounded-xl p-2 flex flex-wrap gap-1 z-50 w-56 shadow-xl"
-              >
-                {extra.map((u, i) => (
-                  <span
-                    key={u.instanceId ?? `${u.id}-${i}`}
-                    title={`${u.rarity.toUpperCase()} — ${u.description}`}
-                    className={`text-xs px-1.5 py-0.5 rounded border bg-background text-glow-${u.rarity} glow-${u.rarity}`}
-                  >
-                    {u.name}
-                    {u.stackCount && u.stackCount > 1 && (
-                      <span className={`ml-1 font-semibold text-glow-${u.rarity} opacity-90`}>
-                        ×{u.stackCount}
-                      </span>
-                    )}
-                  </span>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 // ── Gold source breakdown (fades 3 s after each rally) ───────────────────────
 
@@ -161,6 +90,25 @@ function GoldSources({ result, myId }: { result: RallyResult | null; myId: 'p1' 
   );
 }
 
+// ── HP row: bar + numbers + floating delta + streak ──────────────────────────
+
+function HpRow({ player, result }: { player: PlayerState; result: RallyResult | null }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-3/4 space-y-0.5">
+        <div className="flex justify-between items-center text-xs text-muted-foreground">
+          <span className="flex items-center gap-2">HP <HpDelta result={result} playerId={player.id} /></span>
+          <span className="tabular-nums">{Math.max(0, player.hp)} / {player.maxHp}</span>
+        </div>
+        <HpBar hp={player.hp} maxHp={player.maxHp} />
+      </div>
+      <div className="flex-1 flex justify-center">
+        <StreakBadge winStreak={player.winStreak} lossStreak={player.lossStreak} />
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
@@ -169,6 +117,8 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
   const opp = state.players[oppId];
   const iAmServing = state.servingPlayerId === myPlayerId;
   const oppServing = state.servingPlayerId === oppId;
+  const result = state.lastRallyResult;
+  const [logOpen, setLogOpen] = useState(false);
 
   // Lock the button after a tap until the server confirms the rally (the
   // rally number changes). The server also rejects duplicate claims.
@@ -180,20 +130,28 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
     return () => clearTimeout(t);
   }, [waitingForServer]);
 
+  // Buzz on big moments (Android; iOS Safari ignores vibrate).
+  useEffect(() => {
+    if (!result) return;
+    const big = result.isCrit || result.combatEvents.some(e => e.source === "Phoenix");
+    if (big) navigator.vibrate?.([60, 40, 120]);
+  }, [result?.rallyNumber]);
+
   return (
     <div className="min-h-screen flex flex-col p-3 gap-3 max-w-lg mx-auto">
 
-      {/* ── Top row: Rally progress + total wins ── */}
-      <div className="flex items-center gap-3 pt-2">
-        <div className="flex-1 text-center">
+      {/* ── Top row: Rally progress + total wins + log ── */}
+      <div className="flex items-center gap-2 pt-2">
+        <div className="flex-1 min-w-0 text-center">
           <div className="text-base font-black text-primary uppercase tracking-widest">
             Rally {state.ralliesThisRound + 1} / {state.ralliesPerRound}
           </div>
-          <div className="flex justify-center gap-1 mt-1">
+          {/* Dots shrink to fit so long rounds (up to 20 rallies) never widen the page */}
+          <div className="flex justify-center gap-0.5 sm:gap-1 mt-1">
             {Array.from({ length: state.ralliesPerRound }).map((_, i) => (
               <div
                 key={i}
-                className={`h-1.5 w-4 rounded-full transition-colors ${
+                className={`h-1.5 flex-1 max-w-4 min-w-0.5 rounded-full transition-colors ${
                   i < state.ralliesThisRound ? 'bg-primary' : 'bg-muted'
                 }`}
               />
@@ -208,11 +166,22 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
             {state.players.p2.totalWins}
           </span>
         </div>
+        <button
+          type="button"
+          onClick={() => setLogOpen(true)}
+          aria-label="Rally log"
+          className="bg-card border border-border rounded-lg p-2 shrink-0 touch-manipulation active:scale-95"
+          data-testid="btn-rally-log"
+        >
+          <ScrollText className="w-4 h-4" />
+        </button>
       </div>
 
+      {/* ── Last rally summary ── */}
+      <RallyBanner result={result} players={state.players} myId={myPlayerId} onDetails={() => setLogOpen(true)} />
+
       {/* ── Opponent card ── */}
-      <div className="bg-card border border-border rounded-xl p-3 space-y-2">
-        {/* Name row */}
+      <div className="bg-card border border-border rounded-xl p-3 space-y-2" data-testid="opponent-card">
         <div className="flex justify-between items-center">
           <span className="font-bold text-sm truncate">{opp.name}</span>
           {oppServing && (
@@ -221,28 +190,13 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
             </span>
           )}
         </div>
-
-        {/* HP row: bar (75%) + streak */}
-        <div className="flex items-center gap-3">
-          <div className="w-3/4 space-y-0.5">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>HP</span>
-              <span className="tabular-nums">{opp.hp} / {opp.maxHp}</span>
-            </div>
-            <HpBar hp={opp.hp} maxHp={opp.maxHp} />
-          </div>
-          <div className="flex-1 flex justify-center">
-            <StreakBadge winStreak={opp.winStreak} lossStreak={opp.lossStreak} />
-          </div>
-        </div>
-
-        {/* Upgrades */}
-        <UpgradeList upgrades={opp.upgrades} />
+        <HpRow player={opp} result={result} />
+        <StatusChips player={opp} />
+        <AbilityList player={opp} />
       </div>
 
       {/* ── My card ── */}
-      <div className="bg-card border border-primary/40 rounded-xl p-3 space-y-2">
-        {/* Name row */}
+      <div className="bg-card border border-primary/40 rounded-xl p-3 space-y-2" data-testid="my-card">
         <div className="flex justify-between items-center">
           <span className="font-bold text-sm">
             {me.name}
@@ -254,23 +208,9 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
             </span>
           )}
         </div>
-
-        {/* HP row */}
-        <div className="flex items-center gap-3">
-          <div className="w-3/4 space-y-0.5">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>HP</span>
-              <span className="tabular-nums">{me.hp} / {me.maxHp}</span>
-            </div>
-            <HpBar hp={me.hp} maxHp={me.maxHp} />
-          </div>
-          <div className="flex-1 flex justify-center">
-            <StreakBadge winStreak={me.winStreak} lossStreak={me.lossStreak} />
-          </div>
-        </div>
-
-        {/* Upgrades */}
-        <UpgradeList upgrades={me.upgrades} />
+        <HpRow player={me} result={result} />
+        <StatusChips player={me} />
+        <AbilityList player={me} />
 
         {/* Gold + breakdown */}
         <div className="pt-1.5 border-t border-border/40 space-y-1">
@@ -278,7 +218,7 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
             <Coins className="w-4 h-4" />
             <span>{me.gold} gold</span>
           </div>
-          <GoldSources result={state.lastRallyResult} myId={myPlayerId} />
+          <GoldSources result={result} myId={myPlayerId} />
         </div>
       </div>
 
@@ -297,6 +237,10 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
           🏓&nbsp; I Won This Rally
         </motion.button>
       </div>
+
+      <BottomSheet open={logOpen} onClose={() => setLogOpen(false)} title="Rally Log">
+        <CombatLog rallies={state.rallyLog ?? []} players={state.players} myId={myPlayerId} />
+      </BottomSheet>
     </div>
   );
 }

@@ -138,6 +138,7 @@ export default function App() {
         return (
           <GameOver
             state={gameState}
+            myPlayerId={myId}
             onRematch={() => send({ type: "rematch" })}
             onLeave={conn.leave}
           />
