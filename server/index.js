@@ -12,7 +12,8 @@ const app = express();
 app.use(express.json());
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
+// Compress messages over 1KB: full-state JSON (with the rally log) shrinks ~8x.
+const wss = new WebSocketServer({ noServer: true, perMessageDeflate: { threshold: 1024 } });
 
 const lobbies = new Map(); // code -> lobby
 const sessions = new Map(); // sessionToken -> { code, role }

@@ -148,6 +148,13 @@ export function drawUpgrades(count, forceRarity = null, exclude = []) {
 }
 
 // ─── Combat ───────────────────────────────────────────────────────────────────
+// Every effect that fires during a rally is recorded as a combat event, so the
+// clients can show exactly what happened (and why) without re-deriving it.
+//   category: 'damage'     – HP removed from targetId (before mitigation)
+//             'mitigation' – damage prevented for targetId
+//             'heal'       – HP restored to targetId (actual amount after caps)
+//             'special'    – crits, procs, shields gained, Phoenix, etc.
+//             'gold'       – gold moved by an ability
 
 function applyHealing(player, amount) {
   const healAmount = player.healingReduction ? Math.floor(amount / 2) : amount;
@@ -157,9 +164,10 @@ function applyHealing(player, amount) {
 }
 
 // Phoenix (epic-4): survive a fatal hit at 10% max HP, consuming one stack.
-// Returns true if it triggered.
+// Returns the HP restored (0 if it didn't trigger).
 function tryPhoenix(player) {
-  if (player.hp > 0 || !hasUpgrade(player.upgrades, 'epic-4')) return false;
+  if (player.hp > 0 || !hasUpgrade(player.upgrades, 'epic-4')) return 0;
+  const before = player.hp;
   player.hp = Math.max(1, Math.round(player.maxHp * 0.1));
   const idx = player.upgrades.findIndex(u => u.id === 'epic-4');
   const phoenix = player.upgrades[idx];
@@ -168,25 +176,18 @@ function tryPhoenix(player) {
   } else {
     player.upgrades.splice(idx, 1);
   }
-  return true;
+  return player.hp - before;
 }
 
-// Damage from DOTs taken by a player outside of the rally hit.
-// Iron Defense reduces it and a shield blocks it.
-function applyIncidentalDamage(player, amount) {
-  if (amount <= 0) return 0;
-  let dmg = Math.max(1, amount - countUpgrade(player.upgrades, 'common-1'));
-  if (player.shield > 0) {
-    player.shield--;
-    dmg = 0;
-  }
-  player.hp -= dmg;
-  return dmg;
-}
+const stacks = (n) => (n > 1 ? ` ×${n}` : '');
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export function resolveRally(winner, loser) {
   const w = structuredClone(winner);
   const l = structuredClone(loser);
+  const events = [];
+  const log = (category, source, targetId, amount, message) =>
+    events.push({ id: `e${events.length + 1}`, category, source, targetId, amount, message });
 
   const hpBefore = {
     p1: winner.id === 'p1' ? winner.hp : loser.hp,
@@ -201,121 +202,169 @@ export function resolveRally(winner, loser) {
   l.lossStreak += 1;
 
   // --- DOT ticks ---
-  let dotDamageToWinner = 0;
-  let dotDamageToLoser = 0;
-
-  // Poison: 10% of current HP
-  if (w.poisonTicks > 0) {
-    w.poisonTicks--;
-    dotDamageToWinner += Math.floor(hpBefore[w.id] * 0.10);
-  }
-  if (l.poisonTicks > 0) {
-    l.poisonTicks--;
-    dotDamageToLoser += Math.floor(hpBefore[l.id] * 0.10);
-  }
-
-  // Ignite: 5% max HP + healing reduction
-  for (const [p, isWinner] of [[w, true], [l, false]]) {
+  // Poison: 10% of current HP. Ignite: 5% of max HP + healing halved.
+  const dots = { [w.id]: [], [l.id]: [] };
+  for (const p of [w, l]) {
+    if (p.poisonTicks > 0) {
+      p.poisonTicks--;
+      dots[p.id].push({ source: 'Poison', amount: Math.floor(hpBefore[p.id] * 0.10), message: `10% of current HP · ${plural(p.poisonTicks, 'rally')} left` });
+    }
     if (p.igniteTicks > 0) {
       p.igniteTicks--;
-      const dot = Math.floor(p.maxHp * 0.05);
-      if (isWinner) dotDamageToWinner += dot; else dotDamageToLoser += dot;
       p.healingReduction = true;
+      dots[p.id].push({ source: 'Ignite', amount: Math.floor(p.maxHp * 0.05), message: `5% of max HP · healing halved · ${plural(p.igniteTicks, 'rally')} left` });
     } else {
       p.healingReduction = false;
     }
   }
 
-  // Thorns (common-6): every 3rd consecutive loss deals 1 per stack to the winner,
-  // ignoring all modifiers (no Iron Defense, not blocked by shields).
-  const thornsStacks = countUpgrade(l.upgrades, 'common-6');
-  const thornsDamageToWinner = thornsStacks > 0 && l.lossStreak % 3 === 0 ? thornsStacks : 0;
-
   // --- Shields Up (legendary-5): shield every 5 consecutive losses ---
   const shieldsUpStacks = countUpgrade(l.upgrades, 'legendary-5');
   if (shieldsUpStacks > 0 && l.lossStreak % 5 === 0) {
     l.shield += shieldsUpStacks;
+    log('special', 'Shields Up', l.id, shieldsUpStacks, `Gained ${plural(shieldsUpStacks, 'shield')} on a ${l.lossStreak}-loss streak`);
   }
 
-  // --- Damage Calculation ---
+  // --- Rally hit on the loser ---
   let damage = 1;
-  damage += countUpgrade(w.upgrades, 'legendary-1') * 4;            // War Machine
-  damage += countUpgrade(w.upgrades, 'common-2');                   // Power Smash
-  damage += Math.min(w.winStreak, 3) * countUpgrade(w.upgrades, 'rare-1'); // Savage Streak
-  if (w.counterStrikeActive) {                                      // Counter Strike
-    damage += 2 * countUpgrade(w.upgrades, 'rare-3');
+  log('damage', 'Rally win', l.id, 1, 'Base damage');
+  const addDamage = (source, amount, message) => {
+    if (amount <= 0) return;
+    damage += amount;
+    log('damage', source, l.id, amount, message);
+  };
+
+  const warMachine = countUpgrade(w.upgrades, 'legendary-1');
+  addDamage('War Machine', warMachine * 4, `+4 base damage${stacks(warMachine)}`);
+  const powerSmash = countUpgrade(w.upgrades, 'common-2');
+  addDamage('Power Smash', powerSmash, `+1 damage${stacks(powerSmash)}`);
+  const savage = countUpgrade(w.upgrades, 'rare-1');
+  addDamage('Savage Streak', Math.min(w.winStreak, 3) * savage, `${w.winStreak}-win streak (max +3)${stacks(savage)}`);
+  if (w.counterStrikeActive) {
+    const counter = countUpgrade(w.upgrades, 'rare-3');
+    addDamage('Counter Strike', 2 * counter, `Payback for your last loss${stacks(counter)}`);
     w.counterStrikeActive = false;
   }
-  damage += w.winStreak * countUpgrade(w.upgrades, 'epic-1');       // Berserker
-  const lifeStealCount = countUpgrade(w.upgrades, 'legendary-2');   // Life Steal
-  damage += lifeStealCount * 2;
+  const berserker = countUpgrade(w.upgrades, 'epic-1');
+  addDamage('Berserker', w.winStreak * berserker, `+1 per win in your ${w.winStreak}-win streak${stacks(berserker)}`);
+  const lifeStealCount = countUpgrade(w.upgrades, 'legendary-2');
+  addDamage('Life Steal', lifeStealCount * 2, `Stole HP${stacks(lifeStealCount)}`);
 
   // Crit (Dead Eye) + Headhunter
-  const critChance = Math.min(1, countUpgrade(w.upgrades, 'rare-6') * 0.2);
+  const deadEye = countUpgrade(w.upgrades, 'rare-6');
+  const critChance = Math.min(1, deadEye * 0.2);
   const isCrit = critChance > 0 && Math.random() < critChance;
   if (isCrit) {
+    const before = damage;
     damage *= 2;
-    damage += 3 * countUpgrade(w.upgrades, 'epic-6');
+    log('damage', 'Critical Hit', l.id, before, `Dead Eye crit (${Math.round(critChance * 100)}% chance) doubled ${before} → ${damage}`);
+    const headhunter = countUpgrade(w.upgrades, 'epic-6');
+    addDamage('Headhunter', 3 * headhunter, `+3 crit damage${stacks(headhunter)}`);
   }
 
-  // Loser's DOT rides along with the rally hit
-  damage += dotDamageToLoser;
+  // The loser's DOT rides along with the rally hit
+  for (const d of dots[l.id]) addDamage(d.source, d.amount, d.message);
 
-  // Iron Defense (min 1)
-  damage = Math.max(1, damage - countUpgrade(l.upgrades, 'common-1'));
+  // Mitigation: Iron Defense (min 1), then a shield blocks the rest.
+  const mitigate = (target, raw) => {
+    const ironDefense = countUpgrade(target.upgrades, 'common-1');
+    let dmg = Math.max(1, raw - ironDefense);
+    if (raw - dmg > 0) log('mitigation', 'Iron Defense', target.id, raw - dmg, `Blocked ${raw - dmg} damage${stacks(ironDefense)}`);
+    if (target.shield > 0 && dmg > 0) {
+      target.shield--;
+      log('mitigation', 'Shield', target.id, dmg, `Absorbed the hit · ${plural(target.shield, 'shield')} left`);
+      dmg = 0;
+    }
+    return dmg;
+  };
 
-  // Shield consumption
-  if (l.shield > 0) {
-    l.shield--;
-    damage = 0;
+  const hitDamage = mitigate(l, damage);
+  l.hp -= hitDamage;
+
+  // --- Damage to the winner: their own DOTs, then Thorns ---
+  let winnerDamageTaken = 0;
+  const winnerDot = dots[w.id].reduce((sum, d) => sum + d.amount, 0);
+  if (winnerDot > 0) {
+    for (const d of dots[w.id]) log('damage', d.source, w.id, d.amount, d.message);
+    const taken = mitigate(w, winnerDot);
+    w.hp -= taken;
+    winnerDamageTaken += taken;
   }
 
-  l.hp -= damage;
-  applyIncidentalDamage(w, dotDamageToWinner);
-  w.hp -= thornsDamageToWinner;
+  // Thorns (common-6): every 3rd consecutive loss, 1 per stack to the winner,
+  // ignoring all modifiers (no Iron Defense, not blocked by shields).
+  const thornsStacks = countUpgrade(l.upgrades, 'common-6');
+  if (thornsStacks > 0 && l.lossStreak % 3 === 0) {
+    w.hp -= thornsStacks;
+    winnerDamageTaken += thornsStacks;
+    log('damage', 'Thorns', w.id, thornsStacks, `${l.lossStreak}-loss streak · ignores defenses${stacks(thornsStacks)}`);
+  }
 
   // --- Phoenix: either player can be saved (winner can die to DOT/Thorns) ---
-  const phoenixTriggered = { [w.id]: tryPhoenix(w), [l.id]: tryPhoenix(l) };
+  const phoenixTriggered = {};
+  for (const p of [w, l]) {
+    const restored = tryPhoenix(p);
+    phoenixTriggered[p.id] = restored > 0;
+    if (restored > 0) {
+      const left = countUpgrade(p.upgrades, 'epic-4');
+      log('special', 'Phoenix', p.id, restored, `Survived a fatal blow · revived at ${p.hp} HP · ${plural(left, 'charge')} left`);
+    }
+  }
 
-  // --- Counter Strike flag: set on loser for next rally ---
-  if (hasUpgrade(l.upgrades, 'rare-3')) {
+  // --- Counter Strike: arm on loser for their next win ---
+  const loserCounter = countUpgrade(l.upgrades, 'rare-3');
+  if (loserCounter > 0) {
+    if (!l.counterStrikeActive) {
+      log('special', 'Counter Strike', l.id, 2 * loserCounter, `Armed · +${2 * loserCounter} damage on your next win`);
+    }
     l.counterStrikeActive = true;
   }
 
   // --- Poison & Ignite application on rally win ---
   w.poisonChance = Math.min(PROC_CHANCE_CAP, countUpgrade(w.upgrades, 'common-7') * POISON_CHANCE_PER_STACK);
   w.igniteChance = Math.min(PROC_CHANCE_CAP, countUpgrade(w.upgrades, 'rare-10') * IGNITE_CHANCE_PER_STACK);
-  if (w.poisonChance > 0 && Math.random() * 100 < w.poisonChance) l.poisonTicks = 3;
-  if (w.igniteChance > 0 && Math.random() * 100 < w.igniteChance) l.igniteTicks = 3;
+  if (w.poisonChance > 0 && Math.random() * 100 < w.poisonChance) {
+    l.poisonTicks = 3;
+    log('special', 'Poison', l.id, 3, `Poisoned for 3 rallies (${w.poisonChance}% chance)`);
+  }
+  if (w.igniteChance > 0 && Math.random() * 100 < w.igniteChance) {
+    l.igniteTicks = 3;
+    log('special', 'Ignite', l.id, 3, `Ignited for 3 rallies (${w.igniteChance}% chance) · healing halved`);
+  }
 
   // --- Winner healing (only while alive) ---
   let winnerHealAmount = 0;
+  const heal = (source, amount, message) => {
+    if (amount <= 0) return;
+    const actual = applyHealing(w, amount);
+    winnerHealAmount += actual;
+    const notes = [message];
+    if (w.healingReduction) notes.push('halved by Ignite');
+    if (actual < (w.healingReduction ? Math.floor(amount / 2) : amount)) notes.push('capped at max HP');
+    log('heal', source, w.id, actual, notes.join(' · '));
+  };
   if (w.hp > 0) {
-    if (lifeStealCount > 0) {
-      winnerHealAmount += applyHealing(w, 2 * lifeStealCount);
-    }
+    heal('Life Steal', 2 * lifeStealCount, `Healed ${2 * lifeStealCount}${stacks(lifeStealCount)}`);
 
     // Vampire (epic-2): 1 HP per 2 damage dealt, overflow tracked across rallies
     const vampireCount = countUpgrade(w.upgrades, 'epic-2');
     if (vampireCount > 0) {
-      w.vampireOverflow = (w.vampireOverflow || 0) + damage;
+      w.vampireOverflow = (w.vampireOverflow || 0) + hitDamage;
       const heals = Math.floor(w.vampireOverflow / 2) * vampireCount;
       if (heals > 0) {
-        winnerHealAmount += applyHealing(w, heals);
         w.vampireOverflow = w.vampireOverflow % 2;
+        heal('Vampire', heals, `1 HP per 2 damage dealt${stacks(vampireCount)}`);
       }
     }
 
-    // Quick Heal (common-4): every 3 consecutive wins
     const quickHealCount = countUpgrade(w.upgrades, 'common-4');
     if (quickHealCount > 0 && w.winStreak % 3 === 0) {
-      winnerHealAmount += applyHealing(w, quickHealCount);
+      heal('Quick Heal', quickHealCount, `${w.winStreak}-win streak${stacks(quickHealCount)}`);
     }
 
-    // Battle Medic (rare-2): every 5 total wins
     const battleMedicCount = countUpgrade(w.upgrades, 'rare-2');
     if (battleMedicCount > 0 && w.totalWins % 5 === 0) {
-      winnerHealAmount += applyHealing(w, 2 * battleMedicCount);
+      heal('Battle Medic', 2 * battleMedicCount, `Win #${w.totalWins}${stacks(battleMedicCount)}`);
     }
   }
 
@@ -369,10 +418,13 @@ export function resolveRally(winner, loser) {
 
   // Opportunist (epic-5): steal 1 gold per copy
   const opportunistCount = countUpgrade(w.upgrades, 'epic-5');
+  let stolen = 0;
   for (let i = 0; i < opportunistCount && l.gold > 0; i++) {
     l.gold -= 1;
     w.gold += 1;
+    stolen += 1;
   }
+  if (stolen > 0) log('gold', 'Opportunist', w.id, stolen, `Stole ${stolen} gold`);
 
   return {
     winner: w,
@@ -380,12 +432,13 @@ export function resolveRally(winner, loser) {
     result: {
       winnerId: w.id,
       loserId: l.id,
-      damageDealt: damage,
+      damageDealt: hitDamage,
       isCrit,
+      damageTaken: { [w.id]: winnerDamageTaken, [l.id]: hitDamage },
       healAmounts: { [w.id]: winnerHealAmount, [l.id]: 0 },
       goldEarned: { [w.id]: wGold, [l.id]: lGold },
       phoenixTriggered,
-      combatEvents: [],
+      combatEvents: events,
       hpBefore,
     },
   };
@@ -432,6 +485,7 @@ export function createInitialState(p1Name, p2Name) {
     draftTurn: null,
     shopPool: { p1: [], p2: [] },
     shopState: { p1Done: false, p2Done: false },
+    rallyLog: [],
   };
 }
 
@@ -591,37 +645,56 @@ export function applyAction(state, actorId, action) {
   }
 }
 
+const RALLY_LOG_SIZE = 10;
+
 function resolveRallyWin(state, winnerId) {
   const loserId = other(winnerId);
-  const { winner, loser, result } = resolveRally(state.players[winnerId], state.players[loserId]);
+  const { winner, loser, result: rallyResult } = resolveRally(state.players[winnerId], state.players[loserId]);
   const players = { ...state.players, [winnerId]: winner, [loserId]: loser };
 
   const rallyNumber = state.rallyNumber + 1;
   const ralliesThisRound = state.ralliesThisRound + 1;
   const servingPlayerId = other(state.servingPlayerId ?? loserId);
+  const result = { ...rallyResult, rallyNumber: state.rallyNumber };
+
+  const withLog = (r) => [...(state.rallyLog ?? []), r].slice(-RALLY_LOG_SIZE);
 
   if (players.p1.hp <= 0 || players.p2.hp <= 0) {
-    return { ...state, players, rallyNumber, lastRallyResult: result, phase: 'game-over' };
+    return { ...state, players, rallyNumber, lastRallyResult: result, rallyLog: withLog(result), phase: 'game-over' };
   }
 
   // Eternal Flame (legendary-4): +2 HP per copy after every rally
   const healAmounts = { ...result.healAmounts };
+  const combatEvents = [...result.combatEvents];
   for (const id of ['p1', 'p2']) {
-    const amount = countUpgrade(players[id].upgrades, 'legendary-4') * 2;
-    if (amount > 0) {
+    const copies = countUpgrade(players[id].upgrades, 'legendary-4');
+    if (copies > 0) {
       const p = { ...players[id] };
-      healAmounts[id] += applyHealing(p, amount);
+      const actual = applyHealing(p, copies * 2);
+      healAmounts[id] += actual;
       players[id] = p;
+      const notes = [`+2 HP after every rally${stacks(copies)}`];
+      if (p.healingReduction) notes.push('halved by Ignite');
+      if (actual < (p.healingReduction ? copies : copies * 2)) notes.push('capped at max HP');
+      combatEvents.push({ id: `e${combatEvents.length + 1}`, category: 'heal', source: 'Eternal Flame', targetId: id, amount: actual, message: notes.join(' · ') });
     }
   }
-  const lastRallyResult = { ...result, healAmounts };
+  const lastRallyResult = { ...result, healAmounts, combatEvents };
 
   const roundGoldTotals = {
     p1: state.roundGoldTotals.p1 + result.goldEarned.p1.total,
     p2: state.roundGoldTotals.p2 + result.goldEarned.p2.total,
   };
 
-  const base = { ...state, players, lastRallyResult, roundGoldTotals, rallyNumber, servingPlayerId };
+  const base = {
+    ...state,
+    players,
+    lastRallyResult,
+    rallyLog: withLog(lastRallyResult),
+    roundGoldTotals,
+    rallyNumber,
+    servingPlayerId,
+  };
 
   if (ralliesThisRound >= state.ralliesPerRound) {
     return {

@@ -49,7 +49,9 @@ export interface GoldBreakdown {
   upgradeSources: Array<{ name: string; amount: number }>;
 }
 
-export type CombatEventCategory = 'damage' | 'heal' | 'mitigation' | 'special';
+// damage: HP removed from targetId (before mitigation) · mitigation: damage prevented
+// heal: HP restored (actual) · special: crit/proc/shield/Phoenix · gold: gold moved
+export type CombatEventCategory = 'damage' | 'heal' | 'mitigation' | 'special' | 'gold';
 
 export interface CombatEvent {
   id: string;
@@ -57,14 +59,16 @@ export interface CombatEvent {
   source: string;
   amount: number;
   targetId: 'p1' | 'p2';
-  message?: string;
+  message: string;
 }
 
 export interface RallyResult {
+  rallyNumber?: number;
   winnerId: 'p1' | 'p2';
   loserId: 'p1' | 'p2';
   damageDealt: number;
   isCrit: boolean;
+  damageTaken: Record<'p1' | 'p2', number>; // HP actually lost this rally, after mitigation
   healAmounts: Record<'p1' | 'p2', number>;
   goldEarned: Record<'p1' | 'p2', GoldBreakdown>;
   combatEvents: CombatEvent[];
@@ -85,6 +89,7 @@ export interface GameState {
   draftTurn: 'p1' | 'p2' | null;
   shopPool: Record<'p1' | 'p2', Upgrade[]>;
   shopState: { p1Done: boolean; p2Done: boolean };
+  rallyLog: RallyResult[]; // most recent last, capped on the server
 }
 
 // Intents a client sends to the server. The server validates and applies them

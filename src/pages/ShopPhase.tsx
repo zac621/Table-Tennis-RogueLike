@@ -3,7 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildExcludeList, finalCost, REFRESH_COST } from "../../shared/engine.js";
-import { RefreshCw, Heart, Coins, Clock } from "lucide-react";
+import { RefreshCw, Heart, Coins, Clock, ScrollText } from "lucide-react";
+import { useState } from "react";
+import AbilityList from "@/components/game/AbilityList";
+import StatusChips from "@/components/game/StatusChips";
+import BottomSheet from "@/components/game/BottomSheet";
+import CombatLog from "@/components/game/CombatLog";
 
 interface Props {
   state: GameState;
@@ -16,6 +21,7 @@ interface Props {
 export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId }: Props) {
   const activeId = myPlayerId;
   const myDone = myPlayerId === 'p1' ? state.shopState.p1Done : state.shopState.p2Done;
+  const [logOpen, setLogOpen] = useState(false);
 
   const player = state.players[activeId];
   const pool = state.shopPool[activeId];
@@ -104,8 +110,29 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
               </span>
             )}
           </div>
+
+          {/* Owned abilities — tap for details */}
+          <div className="text-left space-y-1.5 pt-1 border-t border-border/60">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-widest text-muted-foreground">Your abilities</p>
+              <button
+                type="button"
+                onClick={() => setLogOpen(true)}
+                className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border border-border bg-background touch-manipulation"
+                data-testid="btn-shop-rally-log"
+              >
+                <ScrollText className="w-3.5 h-3.5" /> Rally log
+              </button>
+            </div>
+            <StatusChips player={player} />
+            <AbilityList player={player} max={Infinity} />
+          </div>
         </div>
       </div>
+
+      <BottomSheet open={logOpen} onClose={() => setLogOpen(false)} title="Rally Log">
+        <CombatLog rallies={state.rallyLog ?? []} players={state.players} myId={myPlayerId} />
+      </BottomSheet>
 
       {/* Upgrade Cards */}
       <div className="flex flex-wrap justify-center gap-6 w-full items-center">
@@ -137,9 +164,10 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                   transition={{ duration: 0.2 }}
                   whileHover={canAfford ? { scale: 1.05 } : {}}
                   whileTap={canAfford ? { scale: 0.95 } : {}}
+                  className="w-full max-w-86"
                 >
                   <Card
-                    className={`relative w-86 h-45 flex flex-col p-4 transition-colors bg-card border ${
+                    className={`relative w-full min-h-45 flex flex-col p-4 transition-colors bg-card border ${
 
                       canAfford
                         ? `cursor-pointer hover:border-primary glow-${u.rarity}`

@@ -38,9 +38,10 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
                 whileHover={{ scale: disabled ? 1 : 1.05 }}
                 whileTap={{ scale: disabled ? 1 : 0.95 }}
                 key={u.instanceId ?? `${u.id}-${i}`}
+                className="w-full max-w-86"
               >
                 <Card
-                  className={`relative w-86 h-45 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
+                  className={`relative w-full min-h-45 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
                   onClick={() => !disabled && onSelect(u)}
                   data-testid={`card-upgrade-${u.id}`}
                 >
