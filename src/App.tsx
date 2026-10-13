@@ -37,11 +37,11 @@ export default function App() {
   const { status, session, gameState, partner } = conn;
 
   const send = (action: GameAction) => {
-    if (!conn.sendAction(action)) {
+    const result = conn.sendAction(action);
+    if (result === "offline") {
       toast({ title: "Not connected", description: "Reconnecting to the server — try again in a moment." });
-      return false;
     }
-    return true;
+    return result === "sent";
   };
 
   const renderGame = () => {

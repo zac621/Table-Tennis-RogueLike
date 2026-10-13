@@ -24,7 +24,7 @@ export const RARE_UPGRADES = [
   { id: 'rare-5',   name: 'Momentum',       rarity: 'rare', cost: 15, description: 'Win streak gold bonuses are doubled. Unique — can only be owned once.' },
   { id: 'rare-6',   name: 'Dead Eye',       rarity: 'rare', cost: 15, description: 'Rally wins have a 20% crit chance (double damage). Each copy adds +20%, capped at 100%. Not offered once you hit the cap.' },
   { id: 'epic-3',   name: 'Treasury',       rarity: 'rare', cost: 15, description: 'Interest gold cap raised from 50 to 80 gold.' },
-  { id: 'rare-10',  name: 'Ignite',         rarity: 'rare', cost: 15, description: 'Rally wins have +5% chance to apply ignite (5% max HP per rally for 3 rallies, halves healing). Stacks to 20%.' },
+  { id: 'rare-10',  name: 'Ignite',         rarity: 'rare', cost: 15, description: 'Rally wins have +1% chance to apply ignite (5% max HP per rally for 3 rallies, halves healing). Stacks to 20%.' },
 ];
 
 export const EPIC_UPGRADES = [
@@ -47,7 +47,7 @@ export const LEGENDARY_UPGRADES = [
 export const ALL_UPGRADES = [...COMMON_UPGRADES, ...RARE_UPGRADES, ...EPIC_UPGRADES, ...LEGENDARY_UPGRADES];
 
 export const POISON_CHANCE_PER_STACK = 1;  // %
-export const IGNITE_CHANCE_PER_STACK = 5;  // %
+export const IGNITE_CHANCE_PER_STACK = 1;  // %
 export const PROC_CHANCE_CAP = 20;         // %
 export const REFRESH_COST = 10;
 
