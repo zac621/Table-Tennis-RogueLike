@@ -6,7 +6,7 @@ import { Coins, Trophy } from "lucide-react";
 interface Props {
   state: GameState;
   myPlayerId: 'p1' | 'p2';
-  onWin: (winnerId: 'p1' | 'p2') => void;
+  onWin: () => void;
 }
 
 // ── HP Bar ────────────────────────────────────────────────────────────────────
@@ -170,6 +170,16 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
   const iAmServing = state.servingPlayerId === myPlayerId;
   const oppServing = state.servingPlayerId === oppId;
 
+  // Lock the button after a tap until the server confirms the rally (the
+  // rally number changes). The server also rejects duplicate claims.
+  const [claimedRally, setClaimedRally] = useState<number | null>(null);
+  const waitingForServer = claimedRally === state.rallyNumber;
+  useEffect(() => {
+    if (!waitingForServer) return;
+    const t = setTimeout(() => setClaimedRally(null), 4000);
+    return () => clearTimeout(t);
+  }, [waitingForServer]);
+
   return (
     <div className="min-h-screen flex flex-col p-3 gap-3 max-w-lg mx-auto">
 
@@ -275,9 +285,14 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
       {/* ── Score button ── */}
       <div className="flex-1 flex items-center justify-center py-3 min-h-[100px]">
         <motion.button
-          whileTap={{ scale: 0.94 }}
-          onClick={() => onWin(myPlayerId)}
-          className="w-full max-w-sm py-7 rounded-2xl bg-primary text-primary-foreground font-black text-2xl uppercase tracking-wider shadow-xl select-none hover:brightness-110 active:brightness-90 transition-[filter]"
+          whileTap={waitingForServer ? undefined : { scale: 0.94 }}
+          disabled={waitingForServer}
+          onClick={() => {
+            if (waitingForServer) return;
+            setClaimedRally(state.rallyNumber);
+            onWin();
+          }}
+          className="w-full max-w-sm py-7 rounded-2xl bg-primary text-primary-foreground font-black text-2xl uppercase tracking-wider shadow-xl select-none hover:brightness-110 active:brightness-90 transition-[filter] disabled:opacity-60"
         >
           🏓&nbsp; I Won This Rally
         </motion.button>

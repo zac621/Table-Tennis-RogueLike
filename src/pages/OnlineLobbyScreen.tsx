@@ -1,172 +1,58 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { Copy, Check, Wifi, ArrowLeft, Loader2 } from "lucide-react";
-import { buildWsUrl } from "@/lib/websocket";
+import { Copy, Check, Wifi, Loader2 } from "lucide-react";
+import type { ConnectionStatus } from "@/lib/connection";
 
 interface Props {
-  onReady: (
-    ws: WebSocket,
-    myPlayerId: "p1" | "p2",
-    myName: string,
-    partnerName: string,
-    lobbyCode: string,
-    sessionToken: string
-  ) => void;
-  onBack: () => void;
+  status: ConnectionStatus;
+  lobbyCode: string | null; // set once the host's lobby exists
+  error: string;
+  onCreate: (playerName: string) => void;
+  onJoin: (code: string, playerName: string) => void;
+  onCancel: () => void;
 }
 
 type Mode = "choose" | "create" | "join";
-type Status =
-  | "idle"
-  | "connecting"
-  | "waiting_partner"
-  | "joining"
-  | "joined";
 
-export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
-  const [mode, setMode] = useState<Mode>("choose");
-  const [status, setStatusState] = useState<Status>("idle");
+export default function OnlineLobbyScreen({ status, lobbyCode, error, onCreate, onJoin, onCancel }: Props) {
+  const [selectedMode, setMode] = useState<Mode>("choose");
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
-  const [lobbyCode, setLobbyCode] = useState("");
-  const [sessionToken, setSessionToken] = useState("");
-  const [error, setError] = useState("");
+  const [localError, setLocalError] = useState("");
   const [copied, setCopied] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const statusRef = useRef<Status>("idle");
-  const wsMessageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
-  const wsErrorHandlerRef = useRef<(() => void) | null>(null);
-  const wsCloseHandlerRef = useRef<(() => void) | null>(null);
 
-  const setStatus = (next: Status) => {
-    statusRef.current = next;
-    setStatusState(next);
+  const busy = status === "connecting";
+  const waiting = !!lobbyCode;
+  const locked = busy || waiting;
+  const shownError = localError || error;
+  // A host that reloads while waiting comes back here with a lobby code.
+  const mode: Mode = waiting ? "create" : selectedMode;
+
+  const handleCreate = () => {
+    if (!myName.trim()) { setLocalError("Enter your name first."); return; }
+    setLocalError("");
+    onCreate(myName.trim());
   };
 
-  const connectAndSend = async (
-    msg: object,
-    onMessage: (ws: WebSocket, data: { type: string; [k: string]: unknown }) => void
-  ) => {
-    setError("");
-
-    const ws = new WebSocket(buildWsUrl());
-    wsRef.current = ws;
-    let opened = false;
-
-    ws.onopen = () => {
-      opened = true;
-      ws.send(JSON.stringify(msg));
-    };
-
-    const handleMessage = (event: MessageEvent) => {
-      const data = JSON.parse(event.data as string);
-      if (data.type === "error") {
-        setError(data.message as string);
-        setStatus("idle");
-        ws.close();
-        return;
-      }
-      onMessage(ws, data);
-    };
-
-    const handleError = () => {
-      if (!opened && (statusRef.current === "connecting" || statusRef.current === "joining")) {
-        setError("Connection failed. Make sure both devices are online.");
-        setStatus("idle");
-      }
-    };
-
-    const handleClose = () => {
-      if (!opened && (statusRef.current === "connecting" || statusRef.current === "joining")) {
-        setStatus("idle");
-      }
-    };
-
-    ws.addEventListener("message", handleMessage);
-    ws.addEventListener("error", handleError);
-    ws.addEventListener("close", handleClose);
-
-    wsMessageHandlerRef.current = handleMessage;
-    wsErrorHandlerRef.current = handleError;
-    wsCloseHandlerRef.current = handleClose;
-  };
-
-  const handleCreate = async () => {
-    if (!myName.trim()) { setError("Enter your name first."); return; }
-    setStatus("connecting");
-    let token = "";
-    await connectAndSend(
-      { type: "create_lobby", playerName: myName.trim() },
-      (ws, data) => {
-        if (data.type === "lobby_created") {
-          token = data.sessionToken as string;
-          setLobbyCode(data.code as string);
-          setSessionToken(token);
-          setStatus("waiting_partner");
-        } else if (data.type === "partner_joined") {
-          setStatus("joined");
-          onReady(
-            ws,
-            "p1",
-            myName.trim(),
-            data.partnerName as string,
-            data.code as string,
-            token
-          );
-        }
-      }
-    );
-  };
-
-  const handleJoin = async () => {
-    if (!myName.trim()) { setError("Enter your name first."); return; }
-    if (!joinCode.trim()) { setError("Enter the lobby code."); return; }
-    if (joinCode.trim().length !== 6) {
-      setError("Lobby code must be exactly 6 characters.");
-      return;
-    }
-    setStatus("joining");
-    await connectAndSend(
-      { type: "join_lobby", code: joinCode.trim().toUpperCase(), playerName: myName.trim() },
-      (ws, data) => {
-        if (data.type === "lobby_joined") {
-          setSessionToken(data.sessionToken as string);
-          setStatus("joined");
-          onReady(
-            ws,
-            "p2",
-            myName.trim(),
-            data.partnerName as string,
-            data.code as string,
-            data.sessionToken as string
-          );
-        }
-      }
-    );
+  const handleJoin = () => {
+    if (!myName.trim()) { setLocalError("Enter your name first."); return; }
+    const code = joinCode.trim().toUpperCase();
+    if (code.length !== 6) { setLocalError("Lobby code must be exactly 6 characters."); return; }
+    setLocalError("");
+    onJoin(code, myName.trim());
   };
 
   const copyCode = () => {
-    navigator.clipboard.writeText(lobbyCode).then(() => {
+    if (!lobbyCode) return;
+    navigator.clipboard?.writeText(lobbyCode).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    }).catch(() => { /* clipboard blocked; code is visible anyway */ });
   };
-
-  useEffect(() => {
-    return () => {
-      const ws = wsRef.current;
-      if (!ws) return;
-      if (wsMessageHandlerRef.current) ws.removeEventListener("message", wsMessageHandlerRef.current);
-      if (wsErrorHandlerRef.current) ws.removeEventListener("error", wsErrorHandlerRef.current);
-      if (wsCloseHandlerRef.current) ws.removeEventListener("close", wsCloseHandlerRef.current);
-    };
-  }, []);
-
-  const busy = status === "connecting" || status === "joining";
 
   return (
     <motion.div
@@ -176,14 +62,12 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
     >
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="pb-2">
-          <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <CardTitle className="text-2xl font-bold text-primary flex items-center gap-2">
-              <Wifi className="w-6 h-6" /> Online Game
-            </CardTitle>
-          </div>
+          <CardTitle className="text-3xl font-bold text-center text-primary tracking-tight flex items-center justify-center gap-2">
+            <Wifi className="w-7 h-7" /> Ping Pong RPG
+          </CardTitle>
+          <p className="text-center text-muted-foreground text-sm pt-1">
+            Each player joins from their own phone
+          </p>
         </CardHeader>
         <CardContent className="space-y-6 pt-4">
 
@@ -194,7 +78,9 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
               placeholder="Enter your name"
               value={myName}
               onChange={e => setMyName(e.target.value)}
-              disabled={status !== "idle"}
+              onKeyDown={e => e.key === "Enter" && mode === "create" && handleCreate()}
+              disabled={locked}
+              maxLength={24}
               className="bg-input border-border text-lg"
               autoFocus
             />
@@ -203,10 +89,10 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
           {/* Mode picker */}
           {mode === "choose" && (
             <div className="grid grid-cols-2 gap-3">
-              <Button size="lg" className="h-20 text-base font-bold flex-col gap-1" onClick={() => setMode("create")}>
+              <Button size="lg" className="h-20 text-base font-bold flex-col gap-1" onClick={() => { setLocalError(""); setMode("create"); }}>
                 <span className="text-2xl">🎯</span> Create Game
               </Button>
-              <Button size="lg" variant="outline" className="h-20 text-base font-bold flex-col gap-1" onClick={() => setMode("join")}>
+              <Button size="lg" variant="outline" className="h-20 text-base font-bold flex-col gap-1" onClick={() => { setLocalError(""); setMode("join"); }}>
                 <span className="text-2xl">🔗</span> Join Game
               </Button>
             </div>
@@ -215,41 +101,37 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
           {/* Create flow */}
           {mode === "create" && (
             <div className="space-y-4">
-              {status === "idle" && (
-                <Button onClick={handleCreate} className="w-full font-bold text-lg" size="lg" disabled={busy}>
-                  {busy ? <Loader2 className="animate-spin w-4 h-4 mr-2" /> : null}
+              {!locked && (
+                <Button onClick={handleCreate} className="w-full font-bold text-lg" size="lg">
                   Create Lobby
                 </Button>
               )}
 
-              {status === "connecting" && (
+              {busy && (
                 <div className="flex flex-col items-center justify-center text-muted-foreground py-4">
                   <div className="flex items-center gap-2">
-                  <Loader2 className="animate-spin w-4 h-4" /> Connecting…
-                </div>
-                <div className="text-xs mt-1">(may take up to one minute)</div>
+                    <Loader2 className="animate-spin w-4 h-4" /> Connecting…
+                  </div>
+                  <div className="text-xs mt-1">(may take up to one minute)</div>
                 </div>
               )}
 
-              {status === "waiting_partner" && lobbyCode && (
+              {waiting && (
                 <div className="space-y-4 text-center">
                   <p className="text-sm text-muted-foreground">Share this code with your opponent:</p>
                   <div className="flex items-center justify-center gap-3">
                     <span className="text-5xl font-black tracking-widest text-primary">{lobbyCode}</span>
-                    <button onClick={copyCode} className="text-muted-foreground hover:text-primary transition-colors">
+                    <button onClick={copyCode} className="text-muted-foreground hover:text-primary transition-colors" aria-label="Copy code">
                       {copied ? <Check className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5" />}
                     </button>
                   </div>
                   <div className="flex items-center justify-center gap-2 text-muted-foreground text-sm">
                     <Loader2 className="animate-spin w-4 h-4" /> Waiting for opponent…
                   </div>
+                  <button onClick={onCancel} className="text-sm text-muted-foreground hover:text-foreground w-full text-center">
+                    Cancel
+                  </button>
                 </div>
-              )}
-
-              {status === "idle" && (
-                <button onClick={() => setMode("choose")} className="text-sm text-muted-foreground hover:text-foreground w-full text-center">
-                  ← Back
-                </button>
               )}
             </div>
           )}
@@ -263,35 +145,37 @@ export default function OnlineLobbyScreen({ onReady, onBack }: Props) {
                   placeholder="ABC123"
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value.toUpperCase())}
-                  disabled={status !== "idle"}
+                  onKeyDown={e => e.key === "Enter" && handleJoin()}
+                  disabled={locked}
                   maxLength={6}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
                   className="bg-input border-border text-2xl font-bold tracking-widest text-center uppercase"
                 />
               </div>
 
-              {status === "idle" && (
-                <Button onClick={handleJoin} className="w-full font-bold text-lg" size="lg" disabled={busy}>
+              {!locked && (
+                <Button onClick={handleJoin} className="w-full font-bold text-lg" size="lg">
                   Join Game
                 </Button>
               )}
 
-              {(status === "joining" || status === "joined") && (
+              {busy && (
                 <div className="flex items-center justify-center gap-2 text-muted-foreground py-4">
-                  <Loader2 className="animate-spin w-4 h-4" />
-                  {status === "joining" ? "Joining…" : "Connected! Waiting for host to start…"}
+                  <Loader2 className="animate-spin w-4 h-4" /> Joining…
                 </div>
-              )}
-
-              {status === "idle" && (
-                <button onClick={() => setMode("choose")} className="text-sm text-muted-foreground hover:text-foreground w-full text-center">
-                  ← Back
-                </button>
               )}
             </div>
           )}
 
-          {error && (
-            <p className="text-red-400 text-sm text-center font-semibold">{error}</p>
+          {mode !== "choose" && !locked && (
+            <button onClick={() => { setLocalError(""); setMode("choose"); }} className="text-sm text-muted-foreground hover:text-foreground w-full text-center">
+              ← Back
+            </button>
+          )}
+
+          {shownError && (
+            <p className="text-red-400 text-sm text-center font-semibold">{shownError}</p>
           )}
         </CardContent>
       </Card>

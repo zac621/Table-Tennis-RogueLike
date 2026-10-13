@@ -1,8 +1,12 @@
 // server/index.js
+// Authoritative game server. Clients send intents ({ type: "action" }); the
+// server validates them with the shared engine, updates the lobby's state and
+// broadcasts the full state to both players. Clients never write state.
 import express from "express";
 import http from "http";
 import { WebSocketServer } from "ws";
-import { randomUUID } from "crypto";
+import { randomUUID, randomInt } from "crypto";
+import { applyAction, createInitialState } from "../shared/engine.js";
 
 const app = express();
 app.use(express.json());
@@ -10,153 +14,232 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-const lobbies = new Map();
-const sessions = new Map();
+const lobbies = new Map(); // code -> lobby
+const sessions = new Map(); // sessionToken -> { code, role }
 
-const SESSION_TTL_MS = 1000 * 60 * 60; // 1 hour
-const HEARTBEAT_INTERVAL = 30000; // 30s
+const LOBBY_IDLE_TTL_MS = 1000 * 60 * 60 * 2; // drop lobbies idle for 2h
+const HEARTBEAT_INTERVAL = 30000;
+const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const MAX_NAME_LENGTH = 24;
 
 function now() { return Date.now(); }
-function createSession(lobbyId, role) {
-  const token = randomUUID();
-  sessions.set(token, { lobbyId, role, expiresAt: now() + SESSION_TTL_MS });
-  return token;
+
+function makeLobbyCode() {
+  let code;
+  do {
+    code = "";
+    for (let i = 0; i < 6; i++) code += CODE_CHARS[randomInt(CODE_CHARS.length)];
+  } while (lobbies.has(code));
+  return code;
 }
-function cleanupExpiredSessions() {
+
+function cleanName(name, fallback) {
+  const s = String(name ?? "").trim().slice(0, MAX_NAME_LENGTH);
+  return s || fallback;
+}
+
+function other(role) { return role === "p1" ? "p2" : "p1"; }
+
+function sendSafe(ws, obj) {
+  if (!ws || ws.readyState !== ws.OPEN) return;
+  try { ws.send(JSON.stringify(obj)); } catch { /* socket went away */ }
+}
+
+function deleteLobby(code) {
+  const lobby = lobbies.get(code);
+  if (!lobby) return;
+  for (const role of ["p1", "p2"]) {
+    const slot = lobby.players[role];
+    if (slot) sessions.delete(slot.token);
+  }
+  lobbies.delete(code);
+}
+
+function cleanupIdleLobbies() {
   const t = now();
-  for (const [token, meta] of sessions.entries()) if (meta.expiresAt < t) sessions.delete(token);
-  for (const [lobbyId, lobby] of lobbies.entries()) {
-    if (!lobby.p1 && !lobby.p2 && (!lobby.lastSeen || (t - lobby.lastSeen) > SESSION_TTL_MS)) {
-      lobbies.delete(lobbyId);
-    }
+  for (const [code, lobby] of lobbies) {
+    const anyConnected = ["p1", "p2"].some(r => lobby.players[r]?.ws);
+    if (!anyConnected && t - lobby.lastSeen > LOBBY_IDLE_TTL_MS) deleteLobby(code);
   }
 }
 
-app.get("/.health", (req, res) => res.json({ ok: true }));
+function partnerStatus(lobby, role) {
+  const partner = lobby.players[other(role)];
+  return { type: "partner_status", joined: !!partner, connected: !!partner?.ws, name: partner?.name ?? null };
+}
+
+function sendState(lobby, role) {
+  const slot = lobby.players[role];
+  if (slot?.ws && lobby.state) sendSafe(slot.ws, { type: "state", state: lobby.state });
+}
+
+function broadcastState(lobby) {
+  sendState(lobby, "p1");
+  sendState(lobby, "p2");
+}
+
+// Bind a socket to a lobby slot, replacing (and closing) any previous socket.
+function attachToSlot(ws, lobby, role) {
+  const slot = lobby.players[role];
+  const previous = slot.ws;
+  slot.ws = ws;
+  ws.meta = { code: lobby.code, role };
+  lobby.lastSeen = now();
+  if (previous && previous !== ws) {
+    previous.meta = null; // so its close event doesn't detach the new socket
+    try { previous.close(4000, "Replaced by a newer connection"); } catch { /* ignore */ }
+  }
+}
+
+function handleDisconnect(ws) {
+  if (!ws.meta) return;
+  const { code, role } = ws.meta;
+  ws.meta = null;
+  const lobby = lobbies.get(code);
+  if (!lobby) return;
+  const slot = lobby.players[role];
+  // Only detach if this socket is still the active one for the slot. A stale
+  // socket closing after a reconnect must not clobber the new connection.
+  if (!slot || slot.ws !== ws) return;
+  slot.ws = null;
+  lobby.lastSeen = now();
+  const partner = lobby.players[other(role)];
+  if (partner?.ws) sendSafe(partner.ws, partnerStatus(lobby, other(role)));
+}
+
+function handleMessage(ws, msg) {
+  const { type } = msg;
+
+  if (type === "ping") { sendSafe(ws, { type: "pong" }); return; }
+
+  if (type === "create_lobby") {
+    if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
+    const code = makeLobbyCode();
+    const token = randomUUID();
+    const lobby = {
+      code,
+      players: { p1: { name: cleanName(msg.playerName, "Player 1"), token, ws: null }, p2: null },
+      state: null,
+      lastSeen: now(),
+    };
+    lobbies.set(code, lobby);
+    sessions.set(token, { code, role: "p1" });
+    attachToSlot(ws, lobby, "p1");
+    sendSafe(ws, { type: "session", code, sessionToken: token, playerId: "p1" });
+    sendSafe(ws, partnerStatus(lobby, "p1"));
+    return;
+  }
+
+  if (type === "join_lobby") {
+    if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
+    const code = String(msg.code || "").trim().toUpperCase();
+    const lobby = lobbies.get(code);
+    if (!lobby) { sendSafe(ws, { type: "error", message: "Lobby not found. Check the code and try again." }); return; }
+    if (lobby.players.p2) { sendSafe(ws, { type: "error", message: "That lobby is already full." }); return; }
+
+    const token = randomUUID();
+    lobby.players.p2 = { name: cleanName(msg.playerName, "Player 2"), token, ws: null };
+    sessions.set(token, { code, role: "p2" });
+    attachToSlot(ws, lobby, "p2");
+    lobby.state = createInitialState(lobby.players.p1.name, lobby.players.p2.name);
+
+    sendSafe(ws, { type: "session", code, sessionToken: token, playerId: "p2" });
+    sendSafe(ws, partnerStatus(lobby, "p2"));
+    const host = lobby.players.p1;
+    if (host.ws) sendSafe(host.ws, partnerStatus(lobby, "p1"));
+    broadcastState(lobby);
+    return;
+  }
+
+  if (type === "reconnect") {
+    const meta = sessions.get(String(msg.sessionToken || ""));
+    const lobby = meta && lobbies.get(meta.code);
+    if (!meta || !lobby) { sendSafe(ws, { type: "reconnect_failed" }); return; }
+    if (ws.meta && (ws.meta.code !== meta.code || ws.meta.role !== meta.role)) {
+      sendSafe(ws, { type: "error", message: "Already in a different lobby." });
+      return;
+    }
+    const { role } = meta;
+    attachToSlot(ws, lobby, role);
+    sendSafe(ws, { type: "session", code: lobby.code, sessionToken: msg.sessionToken, playerId: role });
+    sendSafe(ws, partnerStatus(lobby, role));
+    sendState(lobby, role);
+    const partner = lobby.players[other(role)];
+    if (partner?.ws) sendSafe(partner.ws, partnerStatus(lobby, other(role)));
+    return;
+  }
+
+  if (type === "action") {
+    if (!ws.meta) { sendSafe(ws, { type: "error", message: "Not connected to a lobby." }); return; }
+    const lobby = lobbies.get(ws.meta.code);
+    if (!lobby || !lobby.state) {
+      sendSafe(ws, { type: "action_rejected", message: "The game hasn't started yet." });
+      return;
+    }
+    let result;
+    try {
+      result = applyAction(lobby.state, ws.meta.role, msg.action);
+    } catch (err) {
+      console.error("applyAction failed", err);
+      sendSafe(ws, { type: "action_rejected", message: "Server error while applying that action." });
+      return;
+    }
+    lobby.lastSeen = now();
+    if (result.error) {
+      sendSafe(ws, { type: "action_rejected", message: result.error });
+      sendState(lobby, ws.meta.role); // resync the client just in case
+      return;
+    }
+    lobby.state = result.state;
+    broadcastState(lobby);
+    return;
+  }
+
+  if (type === "leave") {
+    if (!ws.meta) return;
+    const { code, role } = ws.meta;
+    const lobby = lobbies.get(code);
+    ws.meta = null;
+    if (!lobby) return;
+    const partner = lobby.players[other(role)];
+    if (partner?.ws) sendSafe(partner.ws, { type: "partner_left" });
+    deleteLobby(code);
+    return;
+  }
+
+  sendSafe(ws, { type: "error", message: "Unsupported message type." });
+}
+
+app.get("/.health", (req, res) => res.json({ ok: true, lobbies: lobbies.size }));
 
 server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
-function sendSafe(ws, obj) {
-  try { ws.send(JSON.stringify(obj)); } catch (e) {}
-}
-
-function attachWsHandlers(ws) {
+wss.on("connection", (ws) => {
   ws.isAlive = true;
+  ws.meta = null;
   ws.on("pong", () => { ws.isAlive = true; });
   ws.on("message", (raw) => {
+    ws.isAlive = true;
     let msg;
-    try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (!msg || typeof msg !== "object") return;
     handleMessage(ws, msg);
   });
   ws.on("close", () => handleDisconnect(ws));
   ws.on("error", () => handleDisconnect(ws));
-}
-
-function handleDisconnect(ws) {
-  if (!ws.meta) return;
-  const { lobbyId, role } = ws.meta;
-  const lobby = lobbies.get(lobbyId);
-  if (!lobby) return;
-  if (role === "p1") lobby.p1 = undefined;
-  if (role === "p2") lobby.p2 = undefined;
-  lobby.lastSeen = now();
-  const partner = role === "p1" ? lobby.p2 : lobby.p1;
-  if (partner) sendSafe(partner, { type: "partner_left" });
-}
-
-function handleMessage(ws, msg) {
-  const { type } = msg;
-  if (type === "create_lobby") {
-    const lobbyId = randomUUID().slice(0, 6).toUpperCase();
-    const hostToken = createSession(lobbyId, "p1");
-    const guestToken = createSession(lobbyId, "p2");
-    const lobby = {
-      lobbyId,
-      hostToken,
-      guestToken,
-      hostName: msg.playerName,
-      state: null,
-      lastSeen: now(),
-    };
-    lobbies.set(lobbyId, lobby);
-    lobby.p1 = ws;
-    ws.meta = { lobbyId, role: "p1", sessionToken: hostToken };
-    sendSafe(ws, {
-      type: "lobby_created",
-      code: lobbyId,
-      sessionToken: hostToken,
-    });
-    return;
-  }
-
-  if (type === "join_lobby") {
-    const lobbyId = String(msg.code || "").toUpperCase();
-    const lobby = lobbies.get(lobbyId);
-    if (!lobby) { sendSafe(ws, { type: "error", message: "Lobby not found" }); return; }
-    lobby.p2 = ws;
-    ws.meta = { lobbyId, role: "p2", sessionToken: lobby.guestToken };
-    lobby.lastSeen = now();
-    sendSafe(ws, {
-      type: "lobby_joined",
-      code: lobbyId,
-      sessionToken: lobby.guestToken,
-      partnerName: lobby.hostName,
-    });
-    if (lobby.p1) sendSafe(lobby.p1, {
-      type: "partner_joined",
-      partnerName: msg.playerName,
-      code: lobbyId,
-    });
-    return;
-  }
-
-  if (type === "reconnect") {
-    const { sessionToken } = msg;
-    const meta = sessions.get(sessionToken);
-    if (!meta) { sendSafe(ws, { type: "reconnect_failed" }); return; }
-    const { lobbyId, role } = meta;
-    const lobby = lobbies.get(lobbyId);
-    if (!lobby) { sendSafe(ws, { type: "reconnect_failed" }); return; }
-    if (role === "p1") lobby.p1 = ws; else lobby.p2 = ws;
-    ws.meta = { lobbyId, role, sessionToken };
-    lobby.lastSeen = now();
-    const partner = role === "p1" ? lobby.p2 : lobby.p1;
-    sendSafe(ws, { type: "reconnect_ok", lobbyId, state: lobby.state, partnerConnected: !!partner });
-    if (partner) sendSafe(partner, { type: "partner_reconnected" });
-    return;
-  }
-
-  if (type === "state_update") {
-    const { state } = msg;
-    if (!ws.meta) return;
-    const { lobbyId } = ws.meta;
-    const lobby = lobbies.get(lobbyId);
-    if (!lobby) return;
-    lobby.state = state;
-    lobby.lastSeen = now();
-    const partner = ws.meta.role === "p1" ? lobby.p2 : lobby.p1;
-    if (partner) sendSafe(partner, { type: "state_update", state });
-    return;
-  }
-
-  if (type === "ping") { sendSafe(ws, { type: "pong" }); return; }
-}
+  sendSafe(ws, { type: "welcome", serverTime: now() });
+});
 
 setInterval(() => {
-  cleanupExpiredSessions();
+  cleanupIdleLobbies();
   wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) return ws.terminate();
+    if (ws.isAlive === false) { ws.terminate(); return; }
     ws.isAlive = false;
     ws.ping(() => {});
   });
 }, HEARTBEAT_INTERVAL);
-
-wss.on("connection", (ws) => {
-  attachWsHandlers(ws);
-  sendSafe(ws, { type: "welcome", serverTime: now() });
-});
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => console.log(`WS server listening on ${PORT}`));

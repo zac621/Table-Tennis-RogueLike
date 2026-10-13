@@ -4,15 +4,12 @@ export function buildWsUrl(): string {
     return envUrl;
   }
 
-  const host = window.location.hostname === "localhost" ? "localhost:8080" : window.location.host;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 
-  if (host === "localhost" || host.startsWith("localhost:")) {
+  // Local dev: Vite serves the client, the backend runs separately on :8080.
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
     return `${protocol}//localhost:8080`;
   }
 
   return `${protocol}//${window.location.host}`;
 }
-
-export const WS_RECONNECT_MAX_ATTEMPTS = 6;
-export const WS_RECONNECT_BASE_DELAY_MS = 1000;

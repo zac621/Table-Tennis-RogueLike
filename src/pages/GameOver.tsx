@@ -4,10 +4,11 @@ import { motion } from "framer-motion";
 
 interface Props {
   state: GameState;
-  onReset: () => void;
+  onRematch: () => void;
+  onLeave: () => void;
 }
 
-export default function GameOver({ state, onReset }: Props) {
+export default function GameOver({ state, onRematch, onLeave }: Props) {
   const p1 = state.players.p1;
   const p2 = state.players.p2;
   
@@ -51,9 +52,14 @@ export default function GameOver({ state, onReset }: Props) {
         ))}
       </div>
 
-      <Button onClick={onReset} size="lg" className="w-64 font-bold text-xl mt-8" data-testid="btn-play-again">
-        Play Again
-      </Button>
+      <div className="flex flex-col sm:flex-row gap-4 mt-8">
+        <Button onClick={onRematch} size="lg" className="w-64 font-bold text-xl" data-testid="btn-play-again">
+          Rematch
+        </Button>
+        <Button onClick={onLeave} size="lg" variant="outline" className="w-64 font-bold text-xl" data-testid="btn-leave">
+          Leave Lobby
+        </Button>
+      </div>
     </motion.div>
   );
 }
