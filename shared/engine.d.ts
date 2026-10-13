@@ -1,4 +1,4 @@
-import type { GameAction, GameState, PlayerId, PlayerState, RallyResult, Rarity, Upgrade } from '../src/lib/types';
+import type { GameAction, GameState, PlayerId, PlayerState, PlayerStats, RallyResult, Rarity, Upgrade } from '../src/lib/types';
 
 export declare const COMMON_UPGRADES: Upgrade[];
 export declare const RARE_UPGRADES: Upgrade[];
@@ -23,6 +23,7 @@ export declare function resolveRally(
   loser: PlayerState,
 ): { winner: PlayerState; loser: PlayerState; result: RallyResult };
 export declare function createPlayer(id: PlayerId, name: string, maxHp: number): PlayerState;
+export declare function createPlayerStats(): PlayerStats;
 export declare function createInitialState(p1Name: string, p2Name: string): GameState;
 export declare function applyAction(
   state: GameState,
