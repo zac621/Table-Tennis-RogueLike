@@ -68,9 +68,12 @@ function partnerStatus(lobby, role) {
   return { type: "partner_status", joined: !!partner, connected: !!partner?.ws, name: partner?.name ?? null };
 }
 
+// `ack` is the seq of the last action this socket sent that the server has
+// processed. Clients use it to drop locally-predicted actions once the server
+// state includes them.
 function sendState(lobby, role) {
   const slot = lobby.players[role];
-  if (slot?.ws && lobby.state) sendSafe(slot.ws, { type: "state", state: lobby.state });
+  if (slot?.ws && lobby.state) sendSafe(slot.ws, { type: "state", state: lobby.state, ack: slot.ws.lastSeq });
 }
 
 function broadcastState(lobby) {
@@ -170,10 +173,12 @@ function handleMessage(ws, msg) {
   }
 
   if (type === "action") {
+    if (Number.isInteger(msg.seq)) ws.lastSeq = msg.seq;
     if (!ws.meta) { sendSafe(ws, { type: "error", message: "Not connected to a lobby." }); return; }
     const lobby = lobbies.get(ws.meta.code);
     if (!lobby || !lobby.state) {
       sendSafe(ws, { type: "action_rejected", message: "The game hasn't started yet." });
+      if (lobby) sendSafe(ws, { type: "state", state: lobby.state, ack: ws.lastSeq });
       return;
     }
     let result;
@@ -182,12 +187,13 @@ function handleMessage(ws, msg) {
     } catch (err) {
       console.error("applyAction failed", err);
       sendSafe(ws, { type: "action_rejected", message: "Server error while applying that action." });
+      sendState(lobby, ws.meta.role);
       return;
     }
     lobby.lastSeen = now();
     if (result.error) {
       sendSafe(ws, { type: "action_rejected", message: result.error });
-      sendState(lobby, ws.meta.role); // resync the client just in case
+      sendState(lobby, ws.meta.role); // acks the rejected action so the client rolls it back
       return;
     }
     lobby.state = result.state;
@@ -219,6 +225,7 @@ server.on("upgrade", (req, socket, head) => {
 wss.on("connection", (ws) => {
   ws.isAlive = true;
   ws.meta = null;
+  ws.lastSeq = 0;
   ws.on("pong", () => { ws.isAlive = true; });
   ws.on("message", (raw) => {
     ws.isAlive = true;

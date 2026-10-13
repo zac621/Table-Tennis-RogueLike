@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GameAction, GameState, PlayerId } from "./types";
 import { buildWsUrl } from "./websocket";
+import { applyAction } from "../../shared/engine.js";
+
+// Actions whose outcome is fully deterministic, so the client can apply them
+// immediately (same engine as the server) instead of waiting a round trip.
+// The server's state replaces the prediction once it acks the action.
+const PREDICTED_ACTIONS = new Set<GameAction["type"]>(["shop_buy", "shop_done"]);
+
+interface PendingAction {
+  seq: number;
+  action: GameAction;
+}
 
 // Connection lifecycle:
 //   idle        – no lobby; user is on the lobby screen
@@ -27,7 +38,7 @@ type ServerMessage =
   | { type: "session"; code: string; sessionToken: string; playerId: PlayerId }
   | { type: "partner_status"; joined: boolean; connected: boolean; name: string | null }
   | { type: "partner_left" }
-  | { type: "state"; state: GameState }
+  | { type: "state"; state: GameState; ack?: number }
   | { type: "action_rejected"; message: string }
   | { type: "reconnect_failed" }
   | { type: "error"; message: string };
@@ -77,6 +88,28 @@ export function useGameConnection({ onRejected, onPartnerLeft }: Options = {}) {
   const callbacksRef = useRef({ onRejected, onPartnerLeft });
   callbacksRef.current = { onRejected, onPartnerLeft };
 
+  // Client-side prediction: the last state the server sent, plus our own
+  // actions it hasn't processed yet. What we render is the server state with
+  // those pending actions re-applied on top, so an opponent's update arriving
+  // mid-shopping never makes our own purchases flicker back.
+  const serverStateRef = useRef<GameState | null>(null);
+  const pendingRef = useRef<PendingAction[]>([]);
+  const seqRef = useRef(0);
+
+  const predictedState = (): GameState | null => {
+    const base = serverStateRef.current;
+    const me = sessionRef.current?.playerId;
+    if (!base || !me) return base;
+    return pendingRef.current.reduce((s, p) => applyAction(s, me, p.action).state, base);
+  };
+
+  const publishState = () => setGameState(predictedState());
+
+  const resetPrediction = () => {
+    pendingRef.current = [];
+    seqRef.current = 0;
+  };
+
   const clearRetry = () => {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     retryTimerRef.current = null;
@@ -101,6 +134,8 @@ export function useGameConnection({ onRejected, onPartnerLeft }: Options = {}) {
     clearRetry();
     closeSocket();
     updateSession(null);
+    serverStateRef.current = null;
+    resetPrediction();
     setGameState(null);
     setPartner({ joined: false, connected: false, name: null });
     setStatus("idle");
@@ -123,6 +158,10 @@ export function useGameConnection({ onRejected, onPartnerLeft }: Options = {}) {
     }
     socketRef.current = sock;
     lastMessageAtRef.current = Date.now();
+    // seq/ack are per socket. Anything unacked on the old socket either reached
+    // the server (and will be in the state we get back) or was lost.
+    resetPrediction();
+    publishState();
 
     sock.onopen = () => {
       lastMessageAtRef.current = Date.now();
@@ -146,7 +185,9 @@ export function useGameConnection({ onRejected, onPartnerLeft }: Options = {}) {
           setPartner({ joined: msg.joined, connected: msg.connected, name: msg.name });
           break;
         case "state":
-          setGameState(msg.state);
+          serverStateRef.current = msg.state;
+          pendingRef.current = pendingRef.current.filter(p => p.seq > (msg.ack ?? 0));
+          publishState();
           break;
         case "action_rejected":
           callbacksRef.current.onRejected?.(msg.message);
@@ -260,12 +301,26 @@ export function useGameConnection({ onRejected, onPartnerLeft }: Options = {}) {
     open({ type: "join_lobby", code, playerName });
   }, [open]);
 
-  // Returns false if the action could not be sent (not connected).
-  const sendAction = useCallback((action: GameAction): boolean => {
+  // "offline": not connected, nothing sent.
+  // "invalid": a predicted action that our up-to-date local state already rules
+  //   out (e.g. a second tap on a card that was just bought and is still fading
+  //   out). It's dropped instead of bouncing off the server.
+  const sendAction = useCallback((action: GameAction): "sent" | "offline" | "invalid" => {
     const sock = socketRef.current;
-    if (!sock || sock.readyState !== WebSocket.OPEN || !sessionRef.current) return false;
-    sock.send(JSON.stringify({ type: "action", action }));
-    return true;
+    const s = sessionRef.current;
+    if (!sock || sock.readyState !== WebSocket.OPEN || !s) return "offline";
+    const predicted = PREDICTED_ACTIONS.has(action.type);
+    if (predicted) {
+      const current = predictedState();
+      if (!current || applyAction(current, s.playerId, action).error) return "invalid";
+    }
+    const seq = ++seqRef.current;
+    sock.send(JSON.stringify({ type: "action", seq, action }));
+    if (predicted) {
+      pendingRef.current = [...pendingRef.current, { seq, action }];
+      publishState();
+    }
+    return "sent";
   }, []);
 
   const leave = useCallback(() => {
