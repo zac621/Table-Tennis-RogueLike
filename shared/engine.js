@@ -29,9 +29,9 @@ export const RARE_UPGRADES = [
 
 export const EPIC_UPGRADES = [
   { id: 'common-5',    name: 'Bargain Hunt', rarity: 'epic', cost: 25, description: 'All shop upgrades cost 1 less gold. (min 1)' },
-  { id: 'legendary-2', name: 'Life Steal',   rarity: 'epic', cost: 25, description: 'Each rally win steals 2 HP from your opponent and heals you. Stacks — each copy steals an additional 2 HP.' },
+  { id: 'legendary-2', name: 'Life Steal',   rarity: 'epic', cost: 25, description: 'Rally wins deal +2 damage and heal you 2 HP. Stacks — each copy adds +2 damage and +2 healing.' },
   { id: 'epic-1',      name: 'Berserker',    rarity: 'epic', cost: 25, description: 'Rally wins deal extra damage equal to your current win streak.' },
-  { id: 'epic-4',      name: 'Phoenix',      rarity: 'epic', cost: 25, description: 'Once per use: survive a fatal hit and restore 10% of your max HP instead of dying. Consumed on activation.' },
+  { id: 'epic-4',      name: 'Phoenix',      rarity: 'epic', cost: 25, description: 'Once per use: survive a fatal hit and restore 10% of your max HP instead of dying. Consumed on activation. (max 3)' },
   { id: 'epic-5',      name: 'Opportunist',  rarity: 'epic', cost: 25, description: 'Each rally win steals 1 gold from your opponent.' },
   { id: 'epic-6',      name: 'Headhunter',   rarity: 'epic', cost: 25, description: 'Your crits deal 3 additional damage.' },
 ];
@@ -39,9 +39,9 @@ export const EPIC_UPGRADES = [
 export const LEGENDARY_UPGRADES = [
   { id: 'epic-2',      name: 'Vampire',       rarity: 'legendary', cost: 50, description: 'Recover 1 HP for every 2 damage you deal (tracks overflow between rallies).' },
   { id: 'legendary-1', name: 'War Machine',   rarity: 'legendary', cost: 50, description: 'Your base damage on rally wins is increased by 4 per copy. Stacks.' },
-  { id: 'legendary-3', name: 'The Banker',    rarity: 'legendary', cost: 50, description: 'All shop costs reduced by 3 gold. (min 1, stacks with Bargain Hunt)' },
+  { id: 'legendary-3', name: 'The Banker',    rarity: 'legendary', cost: 50, description: 'All shop upgrades cost 3 less gold. (min 1, stacks with Bargain Hunt; refreshes still cost 10g)' },
   { id: 'legendary-4', name: 'Eternal Flame', rarity: 'legendary', cost: 50, description: 'Gain 2 HP after every rally (win or lose). Stacks per copy.' },
-  { id: 'legendary-5', name: 'Shields Up',    rarity: 'legendary', cost: 50, description: 'Every 5 consecutive losses grants a full damage-negating shield, consumed on the next hit.' },
+  { id: 'legendary-5', name: 'Shields Up',    rarity: 'legendary', cost: 50, description: 'Every 5th loss in a row is fully blocked by a shield. Extra copies store spare shields that block later hits. (max 4)' },
 ];
 
 export const ALL_UPGRADES = [...COMMON_UPGRADES, ...RARE_UPGRADES, ...EPIC_UPGRADES, ...LEGENDARY_UPGRADES];
@@ -129,18 +129,23 @@ function rollUpgrade(exclude) {
     if (available.length > 0) return pick(available);
   }
   const all = ALL_UPGRADES.filter(u => !exclude.includes(u.id));
-  return all.length > 0 ? pick(all) : COMMON_UPGRADES[0];
+  return all.length > 0 ? pick(all) : null;
 }
 
 export function drawUpgrades(count, forceRarity = null, exclude = []) {
   const res = [];
   for (let i = 0; i < count; i++) {
+    // No duplicates within one draw: the draft should offer real choices, and a
+    // second copy of a unique/capped upgrade would be unbuyable. If everything
+    // left is excluded, fall back to allowing duplicates rather than failing.
+    const withoutDrawn = [...exclude, ...res.map(u => u.id)];
     let base;
     if (forceRarity === 'legendary') {
-      const pool = LEGENDARY_UPGRADES.filter(u => !exclude.includes(u.id));
-      base = pool.length > 0 ? pick(pool) : LEGENDARY_UPGRADES[0];
+      const fresh = LEGENDARY_UPGRADES.filter(u => !withoutDrawn.includes(u.id));
+      const allowed = LEGENDARY_UPGRADES.filter(u => !exclude.includes(u.id));
+      base = fresh.length ? pick(fresh) : allowed.length ? pick(allowed) : LEGENDARY_UPGRADES[0];
     } else {
-      base = rollUpgrade(exclude);
+      base = rollUpgrade(withoutDrawn) ?? rollUpgrade(exclude) ?? COMMON_UPGRADES[0];
     }
     res.push(withInstanceId(base));
   }
@@ -207,12 +212,12 @@ export function resolveRally(winner, loser) {
   for (const p of [w, l]) {
     if (p.poisonTicks > 0) {
       p.poisonTicks--;
-      dots[p.id].push({ source: 'Poison', amount: Math.floor(hpBefore[p.id] * 0.10), message: `10% of current HP · ${plural(p.poisonTicks, 'rally')} left` });
+      dots[p.id].push({ source: 'Poison', amount: Math.max(1, Math.floor(hpBefore[p.id] * 0.10)), message: `10% of current HP · ${plural(p.poisonTicks, 'rally')} left` });
     }
     if (p.igniteTicks > 0) {
       p.igniteTicks--;
       p.healingReduction = true;
-      dots[p.id].push({ source: 'Ignite', amount: Math.floor(p.maxHp * 0.05), message: `5% of max HP · healing halved · ${plural(p.igniteTicks, 'rally')} left` });
+      dots[p.id].push({ source: 'Ignite', amount: Math.max(1, Math.floor(p.maxHp * 0.05)), message: `5% of max HP · healing halved · ${plural(p.igniteTicks, 'rally')} left` });
     } else {
       p.healingReduction = false;
     }
@@ -242,11 +247,11 @@ export function resolveRally(winner, loser) {
   addDamage('Savage Streak', Math.min(w.winStreak, 3) * savage, `${w.winStreak}-win streak (max +3)${stacks(savage)}`);
   if (w.counterStrikeActive) {
     const counter = countUpgrade(w.upgrades, 'rare-3');
-    addDamage('Counter Strike', 2 * counter, `Payback for your last loss${stacks(counter)}`);
+    addDamage('Counter Strike', 2 * counter, `Payback for a loss last rally${stacks(counter)}`);
     w.counterStrikeActive = false;
   }
   const berserker = countUpgrade(w.upgrades, 'epic-1');
-  addDamage('Berserker', w.winStreak * berserker, `+1 per win in your ${w.winStreak}-win streak${stacks(berserker)}`);
+  addDamage('Berserker', w.winStreak * berserker, `+1 per win in a ${w.winStreak}-win streak${stacks(berserker)}`);
   const lifeStealCount = countUpgrade(w.upgrades, 'legendary-2');
   addDamage('Life Steal', lifeStealCount * 2, `Stole HP${stacks(lifeStealCount)}`);
 
@@ -315,7 +320,7 @@ export function resolveRally(winner, loser) {
   const loserCounter = countUpgrade(l.upgrades, 'rare-3');
   if (loserCounter > 0) {
     if (!l.counterStrikeActive) {
-      log('special', 'Counter Strike', l.id, 2 * loserCounter, `Armed · +${2 * loserCounter} damage on your next win`);
+      log('special', 'Counter Strike', l.id, 2 * loserCounter, `Armed · +${2 * loserCounter} damage on the next win`);
     }
     l.counterStrikeActive = true;
   }
@@ -406,6 +411,7 @@ export function resolveRally(winner, loser) {
       lossStreakBonus,
       interest,
       upgradeBonus,
+      stolen: 0,
       total: base + winStreakBonus + lossStreakBonus + interest + upgradeBonus,
       upgradeSources,
     };
@@ -424,7 +430,17 @@ export function resolveRally(winner, loser) {
     w.gold += 1;
     stolen += 1;
   }
-  if (stolen > 0) log('gold', 'Opportunist', w.id, stolen, `Stole ${stolen} gold`);
+  if (stolen > 0) {
+    log('gold', 'Opportunist', w.id, stolen, `Stole ${stolen} gold`);
+    // Fold the transfer into both breakdowns so every gold figure shown
+    // (per-rally sources, round totals, match stats) adds up to the real change.
+    wGold.stolen = stolen;
+    wGold.total += stolen;
+    wGold.upgradeSources.push({ name: 'Opportunist', amount: stolen });
+    lGold.stolen = -stolen;
+    lGold.total -= stolen;
+    lGold.upgradeSources.push({ name: 'Stolen', amount: -stolen });
+  }
 
   return {
     winner: w,
@@ -526,7 +542,7 @@ function addRallyToStats(stats, result, players) {
     me.phoenixRevives += result.combatEvents.filter(e => e.targetId === id && e.source === 'Phoenix').length;
     const stolen = sum(e => e.targetId === id && e.category === 'gold');
     me.goldStolen += stolen;
-    me.goldEarned += result.goldEarned[id].total + stolen;
+    me.goldEarned += result.goldEarned[id].total; // net of Opportunist steals
   }
   return next;
 }
@@ -702,8 +718,13 @@ export function applyAction(state, actorId, action) {
     }
 
     case 'rematch': {
-      if (state.phase !== 'game-over') return reject(state, 'The game is not over yet.');
-      return { state: createInitialState(state.players.p1.name, state.players.p2.name) };
+      // A rematch needs both players. Repeat taps (or a tap that arrives after
+      // the rematch already started) are harmless no-ops.
+      if (state.phase === 'setup') return { state };
+      if (state.phase !== 'game-over') return reject(state, 'A new game has already started.');
+      const votes = { p1: false, p2: false, ...(state.rematchVotes ?? {}), [actorId]: true };
+      if (votes.p1 && votes.p2) return { state: createInitialState(state.players.p1.name, state.players.p2.name) };
+      return { state: { ...state, rematchVotes: votes } };
     }
 
     default:

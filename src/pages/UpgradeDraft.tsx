@@ -9,9 +9,10 @@ interface Props {
   p2Name: string;
   myPlayerId: 'p1' | 'p2';
   onSelect: (upgrade: Upgrade) => void;
+  pending?: boolean; // a pick was sent, waiting for the server
 }
 
-export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayerId, onSelect }: Props) {
+export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayerId, onSelect, pending }: Props) {
   const activeName = draftTurn === 'p1' ? p1Name : p2Name;
   const isMyTurn = myPlayerId === draftTurn;
 
@@ -19,12 +20,12 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex flex-col items-center justify-center p-6 space-y-8">
       <div className="text-center space-y-2">
         <h2 className="text-primary text-3xl font-bold">Initial Draft</h2>
-        <p className="text-xl text-muted-foreground"><span className="text-primary font-bold">{isMyTurn ? 'Your' : `${activeName}'s`}</span> turn to pick</p>
+        <p className="text-xl text-muted-foreground break-words"><span className="text-primary font-bold">{isMyTurn ? 'Your' : `${activeName}'s`}</span> turn to pick</p>
       </div>
 
       <div className="flex flex-col items-center gap-4">
         {!isMyTurn && (
-          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground break-words max-w-full">
             Waiting for <span className="font-semibold text-foreground">{activeName}</span> to pick their first ability.
           </div>
         )}
@@ -32,7 +33,7 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
 
 
           {pool.map((u, i) => {
-            const disabled = !isMyTurn;
+            const disabled = !isMyTurn || !!pending;
             return (
               <motion.div
                 whileHover={{ scale: disabled ? 1 : 1.05 }}
@@ -41,7 +42,7 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
                 className="w-full max-w-86"
               >
                 <Card
-                  className={`relative w-full min-h-45 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} transition-colors bg-card border-border glow-${u.rarity}`}
+                  className={`relative w-full min-h-45 flex flex-col p-4 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-primary'} touch-manipulation transition-colors bg-card border-border glow-${u.rarity}`}
                   onClick={() => !disabled && onSelect(u)}
                   data-testid={`card-upgrade-${u.id}`}
                 >

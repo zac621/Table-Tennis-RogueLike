@@ -45,6 +45,7 @@ export interface GoldBreakdown {
   lossStreakBonus: number;
   interest: number;
   upgradeBonus: number;
+  stolen?: number; // Opportunist: + for the thief, − for the victim (included in total)
   total: number;
   upgradeSources: Array<{ name: string; amount: number }>;
 }
@@ -91,6 +92,7 @@ export interface GameState {
   shopState: { p1Done: boolean; p2Done: boolean };
   rallyLog: RallyResult[]; // most recent last, capped on the server
   matchStats: Record<'p1' | 'p2', PlayerStats>; // whole-game totals
+  rematchVotes?: Record<'p1' | 'p2', boolean>; // game-over: who has asked for a rematch
 }
 
 export interface PlayerStats {

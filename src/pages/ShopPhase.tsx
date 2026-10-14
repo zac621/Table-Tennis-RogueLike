@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildExcludeList, finalCost, REFRESH_COST } from "../../shared/engine.js";
 import { RefreshCw, Heart, Coins, Clock, ScrollText } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import AbilityList from "@/components/game/AbilityList";
 import StatusChips from "@/components/game/StatusChips";
 import BottomSheet from "@/components/game/BottomSheet";
@@ -16,12 +16,23 @@ interface Props {
   onDone: () => void;
   onRefresh: () => void;
   myPlayerId: 'p1' | 'p2';
+  refreshPending?: boolean; // a refresh was sent and the new cards haven't arrived yet
 }
 
-export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId }: Props) {
+// After a buy the next card slides into the tapped spot; ignore taps on the
+// shop for a moment so a double tap can't buy that card (or hit Refresh/Done).
+const AFTER_BUY_GUARD_MS = 350;
+
+const DISCOUNT_IDS = ['common-5', 'legendary-3'];
+
+export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId, refreshPending }: Props) {
   const activeId = myPlayerId;
+  const oppId = myPlayerId === 'p1' ? 'p2' : 'p1';
   const myDone = myPlayerId === 'p1' ? state.shopState.p1Done : state.shopState.p2Done;
+  const oppDone = oppId === 'p1' ? state.shopState.p1Done : state.shopState.p2Done;
   const [logOpen, setLogOpen] = useState(false);
+  const lastBuyAtRef = useRef(0);
+  const justBought = () => performance.now() - lastBuyAtRef.current < AFTER_BUY_GUARD_MS;
 
   const player = state.players[activeId];
   const pool = state.shopPool[activeId];
@@ -45,7 +56,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
         className="min-h-screen flex flex-col items-center justify-center p-6 text-center gap-6"
       >
         <Clock className="w-12 h-12 text-muted-foreground animate-pulse" />
-        <h2 className="text-3xl font-bold text-primary">Waiting for {other.name}…</h2>
+        <h2 className="text-3xl font-bold text-primary break-words max-w-full">Waiting for {other.name}…</h2>
         <p className="text-muted-foreground">
           Your shopping is done. Game resumes when {other.name} finishes.
         </p>
@@ -79,10 +90,12 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
       <div className="text-center space-y-4 w-full">
         <h2 className="text-4xl font-bold text-primary">Shop Phase</h2>
         <div className="bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
-          <h3 className="text-2xl font-bold">
-            {player.name}'s Turn
-            <span className="ml-2 text-sm text-green-400 font-normal">(you)</span>
-          </h3>
+          <div>
+            <h3 className="text-2xl font-bold">Your Shop</h3>
+            <p className="text-xs text-muted-foreground break-words">
+              {state.players[oppId].name} {oppDone ? "is done shopping" : "is shopping at the same time"}
+            </p>
+          </div>
 
           {/* HP Bar */}
           <div className="space-y-1">
@@ -135,7 +148,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
       </BottomSheet>
 
       {/* Upgrade Cards */}
-      <div className="flex flex-wrap justify-center gap-6 w-full items-center">
+      <div className={`flex flex-wrap justify-center gap-6 w-full items-center transition-opacity ${refreshPending ? 'opacity-50 pointer-events-none' : ''}`}>
 
 
         <AnimatePresence mode="popLayout">
@@ -173,7 +186,11 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                         ? `cursor-pointer hover:border-primary glow-${u.rarity}`
                         : 'opacity-50 cursor-not-allowed'
                     } border-border`}
-                    onClick={() => canAfford && onBuy(u)}
+                    onClick={() => {
+                      if (!canAfford || refreshPending || justBought()) return;
+                      lastBuyAtRef.current = performance.now();
+                      onBuy(u);
+                    }}
                     data-testid={`shop-item-${u.id}`}
                   >
                     <div className="flex justify-between items-start mb-4">
@@ -201,7 +218,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
                     )}
                     {!canAfford && (
                       <div className="absolute inset-0 flex items-center justify-center bg-background/60 rounded-xl font-bold text-destructive text-xl z-10">
-                        {maxed ? 'Maxed Out' : 'Too Expensive'}
+                        {maxed ? (DISCOUNT_IDS.includes(u.id) ? 'Discount Maxed' : 'Maxed Out') : 'Too Expensive'}
                       </div>
                     )}
                   </Card>
@@ -217,20 +234,26 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId 
         <Button
           variant="outline"
           size="lg"
-          className={`gap-2 font-semibold ${!canRefresh ? 'opacity-40 cursor-not-allowed' : ''}`}
-          onClick={() => canRefresh && onRefresh()}
-          disabled={!canRefresh}
+          className={`gap-2 font-semibold touch-manipulation ${!canRefresh ? 'opacity-40 cursor-not-allowed' : ''}`}
+          onClick={() => {
+            if (!canRefresh || refreshPending || justBought()) return;
+            onRefresh();
+          }}
+          disabled={!canRefresh || refreshPending}
           data-testid="btn-refresh-shop"
         >
-          <RefreshCw className="w-4 h-4" />
-          Refresh Shop ({REFRESH_COST}g)
+          <RefreshCw className={`w-4 h-4 ${refreshPending ? 'animate-spin' : ''}`} />
+          {refreshPending ? 'Refreshing…' : `Refresh Shop (${REFRESH_COST}g)`}
         </Button>
 
         <Button
-          onClick={() => onDone()}
+          onClick={() => {
+            if (justBought()) return;
+            onDone();
+          }}
           variant="secondary"
           size="lg"
-          className="w-48 font-bold text-lg"
+          className="w-48 font-bold text-lg touch-manipulation"
           data-testid="btn-done-shop"
         >
           Done Shopping

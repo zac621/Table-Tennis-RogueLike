@@ -13,12 +13,16 @@ app.use(express.json());
 
 const server = http.createServer(app);
 // Compress messages over 1KB: full-state JSON (with the rally log) shrinks ~8x.
-const wss = new WebSocketServer({ noServer: true, perMessageDeflate: { threshold: 1024 } });
+// maxPayload caps the *inflated* size of incoming messages. Clients only send a
+// few hundred bytes; without a cap a tiny compressed frame can inflate to ~100MB.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024, perMessageDeflate: { threshold: 1024 } });
 
 const lobbies = new Map(); // code -> lobby
 const sessions = new Map(); // sessionToken -> { code, role }
 
-const LOBBY_IDLE_TTL_MS = 1000 * 60 * 60 * 2; // drop lobbies idle for 2h
+const LOBBY_IDLE_TTL_MS = 1000 * 60 * 60 * 2; // games in progress: drop after 2h with nobody connected
+const UNSTARTED_LOBBY_TTL_MS = 1000 * 60 * 15; // lobbies that never got past setup: 15 min
+const MAX_LOBBIES = 2000;
 const HEARTBEAT_INTERVAL = 30000;
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const MAX_NAME_LENGTH = 24;
@@ -34,8 +38,14 @@ function makeLobbyCode() {
   return code;
 }
 
+// Client fields are untrusted JSON: anything that isn't a string is treated as
+// empty (never String()-coerced — an object like {"toString":1} would throw).
+function str(value) {
+  return typeof value === "string" ? value : "";
+}
+
 function cleanName(name, fallback) {
-  const s = String(name ?? "").trim().slice(0, MAX_NAME_LENGTH);
+  const s = str(name).trim().slice(0, MAX_NAME_LENGTH);
   return s || fallback;
 }
 
@@ -60,8 +70,23 @@ function cleanupIdleLobbies() {
   const t = now();
   for (const [code, lobby] of lobbies) {
     const anyConnected = ["p1", "p2"].some(r => lobby.players[r]?.ws);
-    if (!anyConnected && t - lobby.lastSeen > LOBBY_IDLE_TTL_MS) deleteLobby(code);
+    if (anyConnected) continue;
+    const started = !!lobby.players.p2 && lobby.state && lobby.state.phase !== "setup";
+    const ttl = started ? LOBBY_IDLE_TTL_MS : UNSTARTED_LOBBY_TTL_MS;
+    if (t - lobby.lastSeen > ttl) deleteLobby(code);
   }
+}
+
+// Ends a lobby on a player's request: tells the partner, frees both sessions.
+function leaveLobby(code, role) {
+  const lobby = lobbies.get(code);
+  if (!lobby) return;
+  const partner = lobby.players[other(role)];
+  if (partner?.ws) {
+    partner.ws.meta = null;
+    sendSafe(partner.ws, { type: "partner_left" });
+  }
+  deleteLobby(code);
 }
 
 function partnerStatus(lobby, role) {
@@ -118,6 +143,13 @@ function handleMessage(ws, msg) {
 
   if (type === "create_lobby") {
     if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
+    if (lobbies.size >= MAX_LOBBIES) {
+      cleanupIdleLobbies();
+      if (lobbies.size >= MAX_LOBBIES) {
+        sendSafe(ws, { type: "error", message: "The server is busy right now. Try again in a minute." });
+        return;
+      }
+    }
     const code = makeLobbyCode();
     const token = randomUUID();
     const lobby = {
@@ -136,7 +168,7 @@ function handleMessage(ws, msg) {
 
   if (type === "join_lobby") {
     if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
-    const code = String(msg.code || "").trim().toUpperCase();
+    const code = str(msg.code).trim().toUpperCase();
     const lobby = lobbies.get(code);
     if (!lobby) { sendSafe(ws, { type: "error", message: "Lobby not found. Check the code and try again." }); return; }
     if (lobby.players.p2) { sendSafe(ws, { type: "error", message: "That lobby is already full." }); return; }
@@ -156,7 +188,7 @@ function handleMessage(ws, msg) {
   }
 
   if (type === "reconnect") {
-    const meta = sessions.get(String(msg.sessionToken || ""));
+    const meta = sessions.get(str(msg.sessionToken));
     const lobby = meta && lobbies.get(meta.code);
     if (!meta || !lobby) { sendSafe(ws, { type: "reconnect_failed" }); return; }
     if (ws.meta && (ws.meta.code !== meta.code || ws.meta.role !== meta.role)) {
@@ -178,7 +210,7 @@ function handleMessage(ws, msg) {
     if (!ws.meta) { sendSafe(ws, { type: "error", message: "Not connected to a lobby." }); return; }
     const lobby = lobbies.get(ws.meta.code);
     if (!lobby || !lobby.state) {
-      sendSafe(ws, { type: "action_rejected", message: "The game hasn't started yet." });
+      sendSafe(ws, { type: "action_rejected", seq: ws.lastSeq, message: "The game hasn't started yet." });
       if (lobby) sendSafe(ws, { type: "state", state: lobby.state, ack: ws.lastSeq });
       return;
     }
@@ -187,13 +219,13 @@ function handleMessage(ws, msg) {
       result = applyAction(lobby.state, ws.meta.role, msg.action);
     } catch (err) {
       console.error("applyAction failed", err);
-      sendSafe(ws, { type: "action_rejected", message: "Server error while applying that action." });
+      sendSafe(ws, { type: "action_rejected", seq: ws.lastSeq, message: "Server error while applying that action." });
       sendState(lobby, ws.meta.role);
       return;
     }
     lobby.lastSeen = now();
     if (result.error) {
-      sendSafe(ws, { type: "action_rejected", message: result.error });
+      sendSafe(ws, { type: "action_rejected", seq: ws.lastSeq, message: result.error });
       sendState(lobby, ws.meta.role); // acks the rejected action so the client rolls it back
       return;
     }
@@ -202,15 +234,13 @@ function handleMessage(ws, msg) {
     return;
   }
 
+  // Leave works from the bound socket, or — when the player's own connection
+  // was down — from any socket that presents the session token.
   if (type === "leave") {
-    if (!ws.meta) return;
-    const { code, role } = ws.meta;
-    const lobby = lobbies.get(code);
+    const meta = ws.meta ?? sessions.get(str(msg.sessionToken));
     ws.meta = null;
-    if (!lobby) return;
-    const partner = lobby.players[other(role)];
-    if (partner?.ws) sendSafe(partner.ws, { type: "partner_left" });
-    deleteLobby(code);
+    if (meta) leaveLobby(meta.code, meta.role);
+    sendSafe(ws, { type: "left" });
     return;
   }
 
@@ -233,7 +263,13 @@ wss.on("connection", (ws) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (!msg || typeof msg !== "object") return;
-    handleMessage(ws, msg);
+    // A bad message must never take the process (and every game) down.
+    try {
+      handleMessage(ws, msg);
+    } catch (err) {
+      console.error("handleMessage failed", err);
+      sendSafe(ws, { type: "error", message: "Bad request." });
+    }
   });
   ws.on("close", () => handleDisconnect(ws));
   ws.on("error", () => handleDisconnect(ws));

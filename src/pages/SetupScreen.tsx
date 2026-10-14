@@ -9,9 +9,10 @@ interface Props {
   p1Name: string;
   p2Name: string;
   onStart: (hp: number, ralliesPerRound: number) => void;
+  pending?: boolean; // start sent, waiting for the server
 }
 
-export default function SetupScreen({ p1Name, p2Name, onStart }: Props) {
+export default function SetupScreen({ p1Name, p2Name, onStart, pending }: Props) {
   const [hp, setHp] = useState(100);
   const [ralliesPerRound, setRalliesPerRound] = useState(5);
 
@@ -70,11 +71,12 @@ export default function SetupScreen({ p1Name, p2Name, onStart }: Props) {
 
           <Button
             onClick={() => onStart(hp, ralliesPerRound)}
-            className="w-full font-bold text-lg"
+            disabled={pending}
+            className="w-full font-bold text-lg touch-manipulation"
             size="lg"
             data-testid="button-start-game"
           >
-            Start Online Game
+            {pending ? "Starting…" : "Start Online Game"}
           </Button>
         </CardContent>
       </Card>

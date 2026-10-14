@@ -75,7 +75,7 @@ export default function RallyBanner({ result, players, myId, onDetails }: Props)
                 💥 CRITICAL HIT!
               </motion.p>
             )}
-            <p className={`font-bold leading-tight ${iWon ? "text-green-300" : "text-red-300"}`}>{headline}</p>
+            <p className={`font-bold leading-tight break-words ${iWon ? "text-green-300" : "text-red-300"}`}>{headline}</p>
           </div>
           <button
             type="button"
@@ -112,7 +112,11 @@ export function HpDelta({ result, playerId }: { result: RallyResult | null; play
   if (!result) return null;
   const lost = result.damageTaken[playerId];
   const healed = result.healAmounts[playerId];
-  if (!lost && !healed) return null;
+  // Phoenix restores HP outside of healing (it isn't counted as healing in stats).
+  const revived = result.combatEvents
+    .filter(e => e.source === "Phoenix" && e.targetId === playerId)
+    .reduce((n, e) => n + e.amount, 0);
+  if (!lost && !healed && !revived) return null;
 
   return (
     <AnimatePresence>
@@ -126,6 +130,7 @@ export function HpDelta({ result, playerId }: { result: RallyResult | null; play
         >
           {lost > 0 && <span className="text-red-400">−{lost}</span>}
           {healed > 0 && <span className="text-green-400">+{healed}</span>}
+          {revived > 0 && <span className="text-orange-400">🔥+{revived}</span>}
         </motion.span>
       )}
     </AnimatePresence>

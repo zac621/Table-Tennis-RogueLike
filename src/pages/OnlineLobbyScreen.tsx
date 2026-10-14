@@ -113,6 +113,9 @@ export default function OnlineLobbyScreen({ status, lobbyCode, error, onCreate, 
                     <Loader2 className="animate-spin w-4 h-4" /> Connecting…
                   </div>
                   <div className="text-xs mt-1">(may take up to one minute)</div>
+                  <button onClick={onCancel} className="mt-3 text-sm text-muted-foreground hover:text-foreground underline underline-offset-4" data-testid="btn-cancel-connect">
+                    Cancel
+                  </button>
                 </div>
               )}
 
@@ -161,8 +164,13 @@ export default function OnlineLobbyScreen({ status, lobbyCode, error, onCreate, 
               )}
 
               {busy && (
-                <div className="flex items-center justify-center gap-2 text-muted-foreground py-4">
-                  <Loader2 className="animate-spin w-4 h-4" /> Joining…
+                <div className="flex flex-col items-center justify-center text-muted-foreground py-4">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="animate-spin w-4 h-4" /> Joining…
+                  </div>
+                  <button onClick={onCancel} className="mt-3 text-sm text-muted-foreground hover:text-foreground underline underline-offset-4" data-testid="btn-cancel-connect">
+                    Cancel
+                  </button>
                 </div>
               )}
             </div>

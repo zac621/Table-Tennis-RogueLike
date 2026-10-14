@@ -11,7 +11,7 @@ import CombatLog from "@/components/game/CombatLog";
 interface Props {
   state: GameState;
   myPlayerId: 'p1' | 'p2';
-  onWin: () => void;
+  onWin: () => boolean; // false if the tap was dropped (not sent)
 }
 
 // ── HP Bar ────────────────────────────────────────────────────────────────────
@@ -47,15 +47,18 @@ function GoldSources({ result, myId }: { result: RallyResult | null; myId: 'p1' 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(false);
 
+  // Keyed on the rally number, not the result object: every state message
+  // (e.g. after a reconnect) carries a new object for the same rally.
+  const rally = result?.rallyNumber;
   useEffect(() => {
     // skip the initial mount so we don't flash stale data
     if (!mountedRef.current) { mountedRef.current = true; return; }
-    if (!result) return;
+    if (rally === undefined) return;
     setVisible(true);
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setVisible(false), 3000);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [result]);
+  }, [rally]);
 
   if (!result) return null;
 
@@ -80,8 +83,8 @@ function GoldSources({ result, myId }: { result: RallyResult | null; myId: 'p1' 
           className="flex flex-wrap gap-x-3 gap-y-0.5"
         >
           {sources.map(s => (
-            <span key={s.label} className="text-yellow-400 text-xs font-semibold">
-              +{s.amount} {s.label}
+            <span key={s.label} className={`text-xs font-semibold ${s.amount < 0 ? "text-red-400" : "text-yellow-400"}`}>
+              {s.amount < 0 ? `−${-s.amount}` : `+${s.amount}`} {s.label}
             </span>
           ))}
         </motion.div>
@@ -122,8 +125,16 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
 
   // Lock the button after a tap until the server confirms the rally (the
   // rally number changes). The server also rejects duplicate claims.
+  // Plus a short cooldown after every claim: once the server confirms, the
+  // second tap of a double tap would otherwise claim the *next* rally too.
   const [claimedRally, setClaimedRally] = useState<number | null>(null);
-  const waitingForServer = claimedRally === state.rallyNumber;
+  const [coolingDown, setCoolingDown] = useState(false);
+  const waitingForServer = claimedRally === state.rallyNumber || coolingDown;
+  useEffect(() => {
+    if (!coolingDown) return;
+    const t = setTimeout(() => setCoolingDown(false), 800);
+    return () => clearTimeout(t);
+  }, [coolingDown]);
   useEffect(() => {
     if (!waitingForServer) return;
     const t = setTimeout(() => setClaimedRally(null), 4000);
@@ -160,10 +171,10 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
         </div>
         <div className="bg-card border border-border rounded-lg px-2.5 py-1.5 shrink-0 flex items-center gap-1.5">
           <Trophy className="w-3.5 h-3.5 text-yellow-500" />
-          <span className="text-sm font-bold tabular-nums">
-            {state.players.p1.totalWins}
+          <span className="text-sm font-bold tabular-nums" aria-label="Rally wins: you versus opponent">
+            <span className="text-sky-400">{me.totalWins}</span>
             <span className="text-muted-foreground mx-1">—</span>
-            {state.players.p2.totalWins}
+            <span className="text-rose-400">{opp.totalWins}</span>
           </span>
         </div>
         <button
@@ -182,8 +193,8 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
 
       {/* ── Opponent card ── */}
       <div className="bg-card border border-border rounded-xl p-3 space-y-2" data-testid="opponent-card">
-        <div className="flex justify-between items-center">
-          <span className="font-bold text-sm truncate">{opp.name}</span>
+        <div className="flex justify-between items-center gap-2">
+          <span className="font-bold text-sm truncate min-w-0">{opp.name}</span>
           {oppServing && (
             <span className="text-xs font-bold uppercase tracking-wider text-primary border border-primary px-2 py-0.5 rounded shrink-0 ml-2">
               Serving
@@ -197,10 +208,10 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
 
       {/* ── My card ── */}
       <div className="bg-card border border-primary/40 rounded-xl p-3 space-y-2" data-testid="my-card">
-        <div className="flex justify-between items-center">
-          <span className="font-bold text-sm">
-            {me.name}
-            <span className="ml-1.5 text-xs text-primary font-normal">(you)</span>
+        <div className="flex justify-between items-center gap-2">
+          <span className="font-bold text-sm flex min-w-0 items-baseline">
+            <span className="truncate">{me.name}</span>
+            <span className="ml-1.5 text-xs text-primary font-normal shrink-0">(you)</span>
           </span>
           {iAmServing && (
             <span className="text-xs font-bold uppercase tracking-wider text-primary border border-primary px-2 py-0.5 rounded shrink-0 ml-2">
@@ -229,10 +240,11 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
           disabled={waitingForServer}
           onClick={() => {
             if (waitingForServer) return;
+            if (!onWin()) return;
             setClaimedRally(state.rallyNumber);
-            onWin();
+            setCoolingDown(true);
           }}
-          className="w-full max-w-sm py-7 rounded-2xl bg-primary text-primary-foreground font-black text-2xl uppercase tracking-wider shadow-xl select-none hover:brightness-110 active:brightness-90 transition-[filter] disabled:opacity-60"
+          className="touch-manipulation w-full max-w-sm py-7 rounded-2xl bg-primary text-primary-foreground font-black text-2xl uppercase tracking-wider shadow-xl select-none hover:brightness-110 active:brightness-90 transition-[filter] disabled:opacity-60"
         >
           🏓&nbsp; I Won This Rally
         </motion.button>

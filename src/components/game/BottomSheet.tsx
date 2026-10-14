@@ -1,4 +1,5 @@
 import { ReactNode, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 
@@ -7,11 +8,15 @@ interface Props {
   onClose: () => void;
   title: ReactNode;
   children: ReactNode;
+  zIndexClass?: string;
 }
 
 // Tap-friendly panel that slides up from the bottom on phones (centered on
 // wider screens). Used instead of hover tooltips, which iOS Safari never shows.
-export default function BottomSheet({ open, onClose, title, children }: Props) {
+// Rendered into <body> through a portal: inside the page tree, a parent's
+// margins (space-y) or transform (motion) would shift the fixed overlay and
+// leave part of the screen uncovered and tappable.
+export default function BottomSheet({ open, onClose, title, children, zIndexClass = "z-[60]" }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -24,10 +29,10 @@ export default function BottomSheet({ open, onClose, title, children }: Props) {
     };
   }, [open, onClose]);
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center" role="dialog" aria-modal="true">
+        <div className={`fixed inset-0 ${zIndexClass} flex items-end sm:items-center justify-center`} role="dialog" aria-modal="true">
           <motion.div
             className="absolute inset-0 bg-black/60"
             initial={{ opacity: 0 }}
@@ -53,6 +58,7 @@ export default function BottomSheet({ open, onClose, title, children }: Props) {
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

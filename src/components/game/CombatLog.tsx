@@ -58,14 +58,13 @@ function goldDetail(g: GoldBreakdown) {
   if (g.winStreakBonus) parts.push(`${g.winStreakBonus} win streak`);
   if (g.lossStreakBonus) parts.push(`${g.lossStreakBonus} loss streak`);
   if (g.interest) parts.push(`${g.interest} interest`);
-  for (const s of g.upgradeSources) parts.push(`${s.amount} ${s.name}`);
+  for (const s of g.upgradeSources) parts.push(`${s.amount < 0 ? `−${-s.amount}` : s.amount} ${s.name}`);
   return parts.join(" · ");
 }
 
 function RallyDetail({ result, nameOf }: { result: RallyResult; nameOf: NameOf }) {
   const heals = result.combatEvents.filter(e => e.category === "heal");
   const specials = result.combatEvents.filter(e => e.category === "special");
-  const goldEvents = result.combatEvents.filter(e => e.category === "gold");
   const ids: PlayerId[] = [result.winnerId, result.loserId];
 
   return (
@@ -96,11 +95,10 @@ function RallyDetail({ result, nameOf }: { result: RallyResult; nameOf: NameOf }
               <span className="font-semibold">{nameOf(id)}</span>
               <p className="text-xs text-muted-foreground leading-snug">{goldDetail(result.goldEarned[id])}</p>
             </div>
-            <span className="font-bold text-yellow-400 tabular-nums">+{result.goldEarned[id].total}g</span>
+            <span className={`font-bold tabular-nums ${result.goldEarned[id].total < 0 ? "text-red-400" : "text-yellow-400"}`}>
+              {result.goldEarned[id].total < 0 ? `−${-result.goldEarned[id].total}` : `+${result.goldEarned[id].total}`}g
+            </span>
           </div>
-        ))}
-        {goldEvents.map(e => (
-          <Row key={e.id} event={{ ...e, message: `${nameOf(e.targetId)} · ${e.message}` }} amount={`+${e.amount}g`} amountClass="text-yellow-400" />
         ))}
       </Section>
     </div>
