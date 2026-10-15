@@ -22,7 +22,7 @@ function highlightChips(r: RallyResult, players: Record<PlayerId, PlayerState>, 
     r.combatEvents.filter(e => e.source === source && (!targetId || e.targetId === targetId));
 
   for (const e of has("Phoenix")) chips.push({ key: e.id, text: `🔥 Phoenix saved ${obj(e.targetId)}!`, className: "text-orange-300 border-orange-500/50" });
-  for (const e of has("Shield")) chips.push({ key: e.id, text: `🛡️ Shield blocked ${e.amount}`, className: "text-sky-300 border-sky-500/50" });
+  for (const e of has("Shield")) chips.push({ key: e.id, text: `🛡️ ${poss(e.targetId)} shield blocked ${e.amount}`, className: "text-sky-300 border-sky-500/50" });
   for (const e of has("Iron Defense")) chips.push({ key: e.id, text: `🛡️ Iron Defense −${e.amount}`, className: "text-sky-300 border-sky-500/50" });
   for (const e of r.combatEvents.filter(e => e.category === "special" && (e.source === "Poison" || e.source === "Ignite"))) {
     chips.push({ key: e.id, text: `${e.source === "Poison" ? "☠️" : "🔥"} ${e.source} → ${obj(e.targetId)}`, className: e.source === "Poison" ? "text-lime-300 border-lime-500/50" : "text-orange-300 border-orange-500/50" });

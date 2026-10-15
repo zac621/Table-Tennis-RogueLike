@@ -120,6 +120,7 @@ export default function CombatLog({ rallies, players, myId }: Props) {
         const key = r.rallyNumber ?? -i;
         const open = openKey === key;
         const iWon = r.winnerId === myId;
+        const blocked = r.combatEvents.some(e => e.source === "Shield" && e.targetId === r.loserId);
         return (
           <div key={key} className="py-2">
             <button
@@ -132,8 +133,8 @@ export default function CombatLog({ rallies, players, myId }: Props) {
                 <p className="text-xs text-muted-foreground">Rally {r.rallyNumber ?? "?"}{i === 0 ? " · latest" : ""}</p>
                 <p className="font-bold truncate">
                   <span className={iWon ? "text-green-400" : "text-red-400"}>{iWon ? "You" : players[r.winnerId].name}</span>
-                  {" hit "}{r.loserId === myId ? "you" : players[r.loserId].name}{" for "}
-                  <span className="tabular-nums">{r.damageDealt}</span>
+                  {" hit "}{r.loserId === myId ? "you" : players[r.loserId].name}
+                  {blocked ? <span className="text-sky-300"> · 🛡️ blocked</span> : <>{" for "}<span className="tabular-nums">{r.damageDealt}</span></>}
                   {r.isCrit && <span className="ml-1.5 text-amber-400">💥 CRIT</span>}
                 </p>
               </div>
