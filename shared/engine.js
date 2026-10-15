@@ -11,7 +11,7 @@ export const COMMON_UPGRADES = [
   { id: 'rare-2',   name: 'Battle Medic', rarity: 'common', cost: 5, description: 'Recover 2 HP every time you reach your 5th, 10th, 15th... total win.' },
   { id: 'rare-4',   name: 'Fortify',      rarity: 'common', cost: 5, description: 'Every 3 consecutive losses, gain +3 extra gold.' },
   { id: 'common-4', name: 'Quick Heal',   rarity: 'common', cost: 5, description: 'Recover 1 HP for every 3 consecutive wins.' },
-  { id: 'common-6', name: 'Thorns',       rarity: 'common', cost: 5, description: 'Deals 1 damage every 3 consecutive losses, ignoring all modifiers.' },
+  { id: 'common-6', name: 'Thorns',       rarity: 'common', cost: 5, description: 'Deals 1 damage every 3 consecutive losses, ignoring Iron Defense.' },
   { id: 'common-7', name: 'Poison',       rarity: 'common', cost: 5, description: 'Rally wins have +1% chance to apply poison (10% current HP per rally for 3 rallies). Stacks to 20%.' },
 ];
 
@@ -29,9 +29,9 @@ export const RARE_UPGRADES = [
 
 export const EPIC_UPGRADES = [
   { id: 'common-5',    name: 'Bargain Hunt', rarity: 'epic', cost: 25, description: 'All shop upgrades cost 1 less gold. (min 1)' },
-  { id: 'legendary-2', name: 'Life Steal',   rarity: 'epic', cost: 25, description: 'Each rally win steals 2 HP from your opponent and heals you. Stacks — each copy steals an additional 2 HP.' },
+  { id: 'legendary-2', name: 'Life Steal',   rarity: 'epic', cost: 25, description: 'Rally wins deal +2 damage and heal you 2 HP. Stacks — each copy adds +2 damage and +2 healing.' },
   { id: 'epic-1',      name: 'Berserker',    rarity: 'epic', cost: 25, description: 'Rally wins deal extra damage equal to your current win streak.' },
-  { id: 'epic-4',      name: 'Phoenix',      rarity: 'epic', cost: 25, description: 'Once per use: survive a fatal hit and restore 10% of your max HP instead of dying. Consumed on activation.' },
+  { id: 'epic-4',      name: 'Phoenix',      rarity: 'epic', cost: 25, description: 'Once per use: survive a fatal hit and restore 10% of your max HP instead of dying. Consumed on activation. (max 3)' },
   { id: 'epic-5',      name: 'Opportunist',  rarity: 'epic', cost: 25, description: 'Each rally win steals 1 gold from your opponent.' },
   { id: 'epic-6',      name: 'Headhunter',   rarity: 'epic', cost: 25, description: 'Your crits deal 3 additional damage.' },
 ];
@@ -39,9 +39,9 @@ export const EPIC_UPGRADES = [
 export const LEGENDARY_UPGRADES = [
   { id: 'epic-2',      name: 'Vampire',       rarity: 'legendary', cost: 50, description: 'Recover 1 HP for every 2 damage you deal (tracks overflow between rallies).' },
   { id: 'legendary-1', name: 'War Machine',   rarity: 'legendary', cost: 50, description: 'Your base damage on rally wins is increased by 4 per copy. Stacks.' },
-  { id: 'legendary-3', name: 'The Banker',    rarity: 'legendary', cost: 50, description: 'All shop costs reduced by 3 gold. (min 1, stacks with Bargain Hunt)' },
+  { id: 'legendary-3', name: 'The Banker',    rarity: 'legendary', cost: 50, description: 'All shop upgrades cost 3 less gold. (min 1, stacks with Bargain Hunt; refreshes still cost 10g)' },
   { id: 'legendary-4', name: 'Eternal Flame', rarity: 'legendary', cost: 50, description: 'Gain 2 HP after every rally (win or lose). Stacks per copy.' },
-  { id: 'legendary-5', name: 'Shields Up',    rarity: 'legendary', cost: 50, description: 'Every 5 consecutive losses grants a full damage-negating shield, consumed on the next hit.' },
+  { id: 'legendary-5', name: 'Shields Up',    rarity: 'legendary', cost: 50, description: 'Every 5th loss in a row gives you 1 shield per copy. A shield fully blocks the next time you would take damage (Poison, Ignite and Thorns included), heals you for 50% of the blocked damage, and cures and prevents Poison and Ignite. (max 4)' },
 ];
 
 export const ALL_UPGRADES = [...COMMON_UPGRADES, ...RARE_UPGRADES, ...EPIC_UPGRADES, ...LEGENDARY_UPGRADES];
@@ -129,7 +129,7 @@ function rollUpgrade(exclude) {
     if (available.length > 0) return pick(available);
   }
   const all = ALL_UPGRADES.filter(u => !exclude.includes(u.id));
-  return all.length > 0 ? pick(all) : COMMON_UPGRADES[0];
+  return all.length > 0 ? pick(all) : null;
 }
 
 export function drawUpgrades(count, forceRarity = null, exclude = []) {
@@ -137,10 +137,14 @@ export function drawUpgrades(count, forceRarity = null, exclude = []) {
   for (let i = 0; i < count; i++) {
     let base;
     if (forceRarity === 'legendary') {
-      const pool = LEGENDARY_UPGRADES.filter(u => !exclude.includes(u.id));
-      base = pool.length > 0 ? pick(pool) : LEGENDARY_UPGRADES[0];
+      // The legendary draft never repeats a card, so every pick is a real
+      // choice (falls back to repeats only if the pool runs out).
+      const fresh = LEGENDARY_UPGRADES.filter(u => !exclude.includes(u.id) && !res.some(r => r.id === u.id));
+      const allowed = LEGENDARY_UPGRADES.filter(u => !exclude.includes(u.id));
+      base = fresh.length ? pick(fresh) : allowed.length ? pick(allowed) : LEGENDARY_UPGRADES[0];
     } else {
-      base = rollUpgrade(exclude);
+      // Shops are fully random: the same upgrade can show up more than once.
+      base = rollUpgrade(exclude) ?? COMMON_UPGRADES[0];
     }
     res.push(withInstanceId(base));
   }
@@ -180,7 +184,7 @@ function tryPhoenix(player) {
 }
 
 const stacks = (n) => (n > 1 ? ` ×${n}` : '');
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n, word) => `${n} ${n === 1 ? word : word.endsWith('y') ? `${word.slice(0, -1)}ies` : `${word}s`}`;
 
 export function resolveRally(winner, loser) {
   const w = structuredClone(winner);
@@ -207,22 +211,24 @@ export function resolveRally(winner, loser) {
   for (const p of [w, l]) {
     if (p.poisonTicks > 0) {
       p.poisonTicks--;
-      dots[p.id].push({ source: 'Poison', amount: Math.floor(hpBefore[p.id] * 0.10), message: `10% of current HP · ${plural(p.poisonTicks, 'rally')} left` });
+      dots[p.id].push({ source: 'Poison', amount: Math.max(1, Math.floor(hpBefore[p.id] * 0.10)), message: `10% of current HP · ${plural(p.poisonTicks, 'rally')} left` });
     }
     if (p.igniteTicks > 0) {
       p.igniteTicks--;
       p.healingReduction = true;
-      dots[p.id].push({ source: 'Ignite', amount: Math.floor(p.maxHp * 0.05), message: `5% of max HP · healing halved · ${plural(p.igniteTicks, 'rally')} left` });
+      dots[p.id].push({ source: 'Ignite', amount: Math.max(1, Math.floor(p.maxHp * 0.05)), message: `5% of max HP · healing halved · ${plural(p.igniteTicks, 'rally')} left` });
     } else {
       p.healingReduction = false;
     }
   }
 
-  // --- Shields Up (legendary-5): shield every 5 consecutive losses ---
+  // --- Shields Up (legendary-5): every 5th loss in a row, top up to one
+  // shield per copy. The first one blocks this very loss.
   const shieldsUpStacks = countUpgrade(l.upgrades, 'legendary-5');
   if (shieldsUpStacks > 0 && l.lossStreak % 5 === 0) {
-    l.shield += shieldsUpStacks;
-    log('special', 'Shields Up', l.id, shieldsUpStacks, `Gained ${plural(shieldsUpStacks, 'shield')} on a ${l.lossStreak}-loss streak`);
+    const gained = Math.max(0, shieldsUpStacks - l.shield);
+    l.shield = Math.max(l.shield, shieldsUpStacks);
+    if (gained > 0) log('special', 'Shields Up', l.id, gained, `${l.lossStreak}-loss streak · ${plural(l.shield, 'shield')} ready`);
   }
 
   // --- Rally hit on the loser ---
@@ -242,13 +248,13 @@ export function resolveRally(winner, loser) {
   addDamage('Savage Streak', Math.min(w.winStreak, 3) * savage, `${w.winStreak}-win streak (max +3)${stacks(savage)}`);
   if (w.counterStrikeActive) {
     const counter = countUpgrade(w.upgrades, 'rare-3');
-    addDamage('Counter Strike', 2 * counter, `Payback for your last loss${stacks(counter)}`);
+    addDamage('Counter Strike', 2 * counter, `Payback for a loss last rally${stacks(counter)}`);
     w.counterStrikeActive = false;
   }
   const berserker = countUpgrade(w.upgrades, 'epic-1');
-  addDamage('Berserker', w.winStreak * berserker, `+1 per win in your ${w.winStreak}-win streak${stacks(berserker)}`);
+  addDamage('Berserker', w.winStreak * berserker, `+1 per win in a ${w.winStreak}-win streak${stacks(berserker)}`);
   const lifeStealCount = countUpgrade(w.upgrades, 'legendary-2');
-  addDamage('Life Steal', lifeStealCount * 2, `Stole HP${stacks(lifeStealCount)}`);
+  addDamage('Life Steal', lifeStealCount * 2, `+2 damage${stacks(lifeStealCount)}`);
 
   // Crit (Dead Eye) + Headhunter
   const deadEye = countUpgrade(w.upgrades, 'rare-6');
@@ -265,39 +271,56 @@ export function resolveRally(winner, loser) {
   // The loser's DOT rides along with the rally hit
   for (const d of dots[l.id]) addDamage(d.source, d.amount, d.message);
 
-  // Mitigation: Iron Defense (min 1), then a shield blocks the rest.
-  const mitigate = (target, raw) => {
-    const ironDefense = countUpgrade(target.upgrades, 'common-1');
-    let dmg = Math.max(1, raw - ironDefense);
-    if (raw - dmg > 0) log('mitigation', 'Iron Defense', target.id, raw - dmg, `Blocked ${raw - dmg} damage${stacks(ironDefense)}`);
-    if (target.shield > 0 && dmg > 0) {
-      target.shield--;
-      log('mitigation', 'Shield', target.id, dmg, `Absorbed the hit · ${plural(target.shield, 'shield')} left`);
-      dmg = 0;
-    }
+  // Iron Defense (min 1 gets through).
+  const ironDefense = (target, raw) => {
+    if (raw <= 0) return 0;
+    const copies = countUpgrade(target.upgrades, 'common-1');
+    const dmg = Math.max(1, raw - copies);
+    if (raw - dmg > 0) log('mitigation', 'Iron Defense', target.id, raw - dmg, `Blocked ${raw - dmg} damage${stacks(copies)}`);
     return dmg;
   };
 
-  const hitDamage = mitigate(l, damage);
+  // Shields Up: a shield blocks everything a player would take this rally,
+  // heals 50% of it, and cures/prevents Poison and Ignite. Healing from the
+  // shield is applied after the cleanse, so it isn't halved by Ignite.
+  const blocked = { [w.id]: false, [l.id]: false };
+  const shieldHeal = { [w.id]: 0, [l.id]: 0 };
+  const pendingShieldHeals = [];
+  const tryShield = (target, dmg) => {
+    if (dmg <= 0 || target.shield <= 0) return dmg;
+    target.shield--;
+    blocked[target.id] = true;
+    log('mitigation', 'Shield', target.id, dmg, `Blocked all ${dmg} damage · ${plural(target.shield, 'shield')} left`);
+    const cured = [target.poisonTicks > 0 && 'Poison', target.igniteTicks > 0 && 'Ignite'].filter(Boolean);
+    target.poisonTicks = 0;
+    target.igniteTicks = 0;
+    target.healingReduction = false;
+    if (cured.length) log('special', 'Cleanse', target.id, 0, `Shield cured ${cured.join(' and ')}`);
+    pendingShieldHeals.push({ target, amount: Math.round(dmg / 2), blocked: dmg });
+    return 0;
+  };
+
+  const hitDamage = tryShield(l, ironDefense(l, damage));
   l.hp -= hitDamage;
 
-  // --- Damage to the winner: their own DOTs, then Thorns ---
-  let winnerDamageTaken = 0;
+  // --- Damage to the winner: their own DOTs (Iron Defense applies) and
+  // Thorns (ignores Iron Defense). A shield blocks both together.
   const winnerDot = dots[w.id].reduce((sum, d) => sum + d.amount, 0);
-  if (winnerDot > 0) {
-    for (const d of dots[w.id]) log('damage', d.source, w.id, d.amount, d.message);
-    const taken = mitigate(w, winnerDot);
-    w.hp -= taken;
-    winnerDamageTaken += taken;
-  }
-
-  // Thorns (common-6): every 3rd consecutive loss, 1 per stack to the winner,
-  // ignoring all modifiers (no Iron Defense, not blocked by shields).
+  for (const d of dots[w.id]) log('damage', d.source, w.id, d.amount, d.message);
   const thornsStacks = countUpgrade(l.upgrades, 'common-6');
-  if (thornsStacks > 0 && l.lossStreak % 3 === 0) {
-    w.hp -= thornsStacks;
-    winnerDamageTaken += thornsStacks;
-    log('damage', 'Thorns', w.id, thornsStacks, `${l.lossStreak}-loss streak · ignores defenses${stacks(thornsStacks)}`);
+  const thorns = thornsStacks > 0 && l.lossStreak % 3 === 0 ? thornsStacks : 0;
+  if (thorns > 0) log('damage', 'Thorns', w.id, thorns, `${l.lossStreak}-loss streak · ignores Iron Defense${stacks(thornsStacks)}`);
+  const winnerDamageTaken = tryShield(w, ironDefense(w, winnerDot) + thorns);
+  w.hp -= winnerDamageTaken;
+
+  // Shield heals land once the damage is resolved.
+  for (const h of pendingShieldHeals) {
+    const actual = applyHealing(h.target, h.amount);
+    shieldHeal[h.target.id] += actual;
+    if (h.amount > 0) {
+      log('heal', 'Shields Up', h.target.id, actual,
+        `50% of ${h.blocked} blocked${actual < h.amount ? ' · capped at max HP' : ''}`);
+    }
   }
 
   // --- Phoenix: either player can be saved (winner can die to DOT/Thorns) ---
@@ -315,7 +338,7 @@ export function resolveRally(winner, loser) {
   const loserCounter = countUpgrade(l.upgrades, 'rare-3');
   if (loserCounter > 0) {
     if (!l.counterStrikeActive) {
-      log('special', 'Counter Strike', l.id, 2 * loserCounter, `Armed · +${2 * loserCounter} damage on your next win`);
+      log('special', 'Counter Strike', l.id, 2 * loserCounter, `Armed · +${2 * loserCounter} damage on the next win`);
     }
     l.counterStrikeActive = true;
   }
@@ -323,13 +346,22 @@ export function resolveRally(winner, loser) {
   // --- Poison & Ignite application on rally win ---
   w.poisonChance = Math.min(PROC_CHANCE_CAP, countUpgrade(w.upgrades, 'common-7') * POISON_CHANCE_PER_STACK);
   w.igniteChance = Math.min(PROC_CHANCE_CAP, countUpgrade(w.upgrades, 'rare-10') * IGNITE_CHANCE_PER_STACK);
+  // A player who is blocking with a shield this rally can't be poisoned/ignited.
   if (w.poisonChance > 0 && Math.random() * 100 < w.poisonChance) {
-    l.poisonTicks = 3;
-    log('special', 'Poison', l.id, 3, `Poisoned for 3 rallies (${w.poisonChance}% chance)`);
+    if (blocked[l.id]) {
+      log('special', 'Cleanse', l.id, 0, 'Shield prevented Poison');
+    } else {
+      l.poisonTicks = 3;
+      log('special', 'Poison', l.id, 3, `Poisoned for 3 rallies (${w.poisonChance}% chance)`);
+    }
   }
   if (w.igniteChance > 0 && Math.random() * 100 < w.igniteChance) {
-    l.igniteTicks = 3;
-    log('special', 'Ignite', l.id, 3, `Ignited for 3 rallies (${w.igniteChance}% chance) · healing halved`);
+    if (blocked[l.id]) {
+      log('special', 'Cleanse', l.id, 0, 'Shield prevented Ignite');
+    } else {
+      l.igniteTicks = 3;
+      log('special', 'Ignite', l.id, 3, `Ignited for 3 rallies (${w.igniteChance}% chance) · healing halved`);
+    }
   }
 
   // --- Winner healing (only while alive) ---
@@ -406,6 +438,7 @@ export function resolveRally(winner, loser) {
       lossStreakBonus,
       interest,
       upgradeBonus,
+      stolen: 0,
       total: base + winStreakBonus + lossStreakBonus + interest + upgradeBonus,
       upgradeSources,
     };
@@ -424,7 +457,17 @@ export function resolveRally(winner, loser) {
     w.gold += 1;
     stolen += 1;
   }
-  if (stolen > 0) log('gold', 'Opportunist', w.id, stolen, `Stole ${stolen} gold`);
+  if (stolen > 0) {
+    log('gold', 'Opportunist', w.id, stolen, `Stole ${stolen} gold`);
+    // Fold the transfer into both breakdowns so every gold figure shown
+    // (per-rally sources, round totals, match stats) adds up to the real change.
+    wGold.stolen = stolen;
+    wGold.total += stolen;
+    wGold.upgradeSources.push({ name: 'Opportunist', amount: stolen });
+    lGold.stolen = -stolen;
+    lGold.total -= stolen;
+    lGold.upgradeSources.push({ name: 'Stolen', amount: -stolen });
+  }
 
   return {
     winner: w,
@@ -435,7 +478,7 @@ export function resolveRally(winner, loser) {
       damageDealt: hitDamage,
       isCrit,
       damageTaken: { [w.id]: winnerDamageTaken, [l.id]: hitDamage },
-      healAmounts: { [w.id]: winnerHealAmount, [l.id]: 0 },
+      healAmounts: { [w.id]: winnerHealAmount + shieldHeal[w.id], [l.id]: shieldHeal[l.id] },
       goldEarned: { [w.id]: wGold, [l.id]: lGold },
       phoenixTriggered,
       combatEvents: events,
@@ -526,7 +569,7 @@ function addRallyToStats(stats, result, players) {
     me.phoenixRevives += result.combatEvents.filter(e => e.targetId === id && e.source === 'Phoenix').length;
     const stolen = sum(e => e.targetId === id && e.category === 'gold');
     me.goldStolen += stolen;
-    me.goldEarned += result.goldEarned[id].total + stolen;
+    me.goldEarned += result.goldEarned[id].total; // net of Opportunist steals
   }
   return next;
 }
@@ -702,8 +745,13 @@ export function applyAction(state, actorId, action) {
     }
 
     case 'rematch': {
-      if (state.phase !== 'game-over') return reject(state, 'The game is not over yet.');
-      return { state: createInitialState(state.players.p1.name, state.players.p2.name) };
+      // A rematch needs both players. Repeat taps (or a tap that arrives after
+      // the rematch already started) are harmless no-ops.
+      if (state.phase === 'setup') return { state };
+      if (state.phase !== 'game-over') return reject(state, 'A new game has already started.');
+      const votes = { p1: false, p2: false, ...(state.rematchVotes ?? {}), [actorId]: true };
+      if (votes.p1 && votes.p2) return { state: createInitialState(state.players.p1.name, state.players.p2.name) };
+      return { state: { ...state, rematchVotes: votes } };
     }
 
     default:

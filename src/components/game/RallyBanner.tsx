@@ -22,13 +22,18 @@ function highlightChips(r: RallyResult, players: Record<PlayerId, PlayerState>, 
     r.combatEvents.filter(e => e.source === source && (!targetId || e.targetId === targetId));
 
   for (const e of has("Phoenix")) chips.push({ key: e.id, text: `🔥 Phoenix saved ${obj(e.targetId)}!`, className: "text-orange-300 border-orange-500/50" });
-  for (const e of has("Shield")) chips.push({ key: e.id, text: `🛡️ Shield blocked ${e.amount}`, className: "text-sky-300 border-sky-500/50" });
+  for (const e of has("Shield")) chips.push({ key: e.id, text: `🛡️ ${poss(e.targetId)} shield blocked ${e.amount}`, className: "text-sky-300 border-sky-500/50" });
   for (const e of has("Iron Defense")) chips.push({ key: e.id, text: `🛡️ Iron Defense −${e.amount}`, className: "text-sky-300 border-sky-500/50" });
   for (const e of r.combatEvents.filter(e => e.category === "special" && (e.source === "Poison" || e.source === "Ignite"))) {
     chips.push({ key: e.id, text: `${e.source === "Poison" ? "☠️" : "🔥"} ${e.source} → ${obj(e.targetId)}`, className: e.source === "Poison" ? "text-lime-300 border-lime-500/50" : "text-orange-300 border-orange-500/50" });
   }
   for (const e of has("Thorns")) chips.push({ key: e.id, text: `🌵 Thorns ${e.amount} → ${obj(e.targetId)}`, className: "text-emerald-300 border-emerald-500/50" });
-  for (const e of has("Shields Up")) chips.push({ key: e.id, text: `🛡️ ${subj(e.targetId)} gained ${e.amount > 1 ? `${e.amount} shields` : "a shield"}`, className: "text-sky-300 border-sky-500/50" });
+  for (const e of has("Shields Up").filter(e => e.category === "special")) {
+    chips.push({ key: e.id, text: `🛡️ ${subj(e.targetId)} gained ${e.amount > 1 ? `${e.amount} shields` : "a shield"}`, className: "text-sky-300 border-sky-500/50" });
+  }
+  for (const e of has("Cleanse")) {
+    chips.push({ key: e.id, text: `✨ ${poss(e.targetId)} ${e.message.replace(/^Shield /, "shield ")}`, className: "text-sky-300 border-sky-500/50" });
+  }
   for (const e of r.combatEvents.filter(e => e.source === "Counter Strike" && e.category === "special")) {
     chips.push({ key: e.id, text: `⚡ ${poss(e.targetId)} counter is armed`, className: "text-yellow-300 border-yellow-500/50" });
   }
@@ -75,7 +80,7 @@ export default function RallyBanner({ result, players, myId, onDetails }: Props)
                 💥 CRITICAL HIT!
               </motion.p>
             )}
-            <p className={`font-bold leading-tight ${iWon ? "text-green-300" : "text-red-300"}`}>{headline}</p>
+            <p className={`font-bold leading-tight break-anywhere ${iWon ? "text-green-300" : "text-red-300"}`}>{headline}</p>
           </div>
           <button
             type="button"
@@ -112,7 +117,11 @@ export function HpDelta({ result, playerId }: { result: RallyResult | null; play
   if (!result) return null;
   const lost = result.damageTaken[playerId];
   const healed = result.healAmounts[playerId];
-  if (!lost && !healed) return null;
+  // Phoenix restores HP outside of healing (it isn't counted as healing in stats).
+  const revived = result.combatEvents
+    .filter(e => e.source === "Phoenix" && e.targetId === playerId)
+    .reduce((n, e) => n + e.amount, 0);
+  if (!lost && !healed && !revived) return null;
 
   return (
     <AnimatePresence>
@@ -126,6 +135,7 @@ export function HpDelta({ result, playerId }: { result: RallyResult | null; play
         >
           {lost > 0 && <span className="text-red-400">−{lost}</span>}
           {healed > 0 && <span className="text-green-400">+{healed}</span>}
+          {revived > 0 && <span className="text-orange-400">🔥+{revived}</span>}
         </motion.span>
       )}
     </AnimatePresence>

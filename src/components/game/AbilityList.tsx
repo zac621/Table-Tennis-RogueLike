@@ -12,7 +12,10 @@ interface Props {
 // Ability badges that open a detail sheet on tap. Works the same on phones
 // and desktop (no hover required).
 export default function AbilityList({ player, max = 8, size = "sm" }: Props) {
-  const [selected, setSelected] = useState<Upgrade | null>(null);
+  // Track the selection by id and look it up each render, so the sheet shows the
+  // live stack count (copies merge by id) and closes if the ability is gone.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected: Upgrade | null = selectedId ? player.upgrades.find(u => u.id === selectedId) ?? null : null;
   const [expanded, setExpanded] = useState(false);
   const { upgrades } = player;
 
@@ -31,7 +34,7 @@ export default function AbilityList({ player, max = 8, size = "sm" }: Props) {
           <button
             type="button"
             key={u.instanceId ?? `${u.id}-${i}`}
-            onClick={() => setSelected(u)}
+            onClick={() => setSelectedId(u.id)}
             aria-label={`${u.name} details`}
             className={`${text} rounded border bg-background text-glow-${u.rarity} glow-${u.rarity} select-none touch-manipulation active:scale-95 transition-transform`}
           >
@@ -64,7 +67,7 @@ export default function AbilityList({ player, max = 8, size = "sm" }: Props) {
 
       <BottomSheet
         open={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={() => setSelectedId(null)}
         title={selected && (
           <span className={`text-glow-${selected.rarity}`}>
             {selected.name}
@@ -76,7 +79,7 @@ export default function AbilityList({ player, max = 8, size = "sm" }: Props) {
           <div className="space-y-3 pb-2">
             <div className="flex items-center gap-2 text-xs uppercase tracking-widest">
               <span className={`px-2 py-0.5 rounded border glow-${selected.rarity} text-glow-${selected.rarity}`}>{selected.rarity}</span>
-              <span className="text-muted-foreground">{player.name}</span>
+              <span className="text-muted-foreground truncate min-w-0">{player.name}</span>
             </div>
             <p className="text-base leading-relaxed">{selected.description}</p>
             {currentEffect(selected.id, player) && (

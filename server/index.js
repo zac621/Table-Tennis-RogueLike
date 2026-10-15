@@ -13,12 +13,40 @@ app.use(express.json());
 
 const server = http.createServer(app);
 // Compress messages over 1KB: full-state JSON (with the rally log) shrinks ~8x.
-const wss = new WebSocketServer({ noServer: true, perMessageDeflate: { threshold: 1024 } });
+// maxPayload caps the *inflated* size of incoming messages. Clients only send a
+// few hundred bytes; without a cap a tiny compressed frame can inflate to ~100MB.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024, perMessageDeflate: { threshold: 1024 } });
 
 const lobbies = new Map(); // code -> lobby
 const sessions = new Map(); // sessionToken -> { code, role }
 
-const LOBBY_IDLE_TTL_MS = 1000 * 60 * 60 * 2; // drop lobbies idle for 2h
+const LOBBY_IDLE_TTL_MS = 1000 * 60 * 60 * 2; // games in progress: drop after 2h with nobody connected
+const UNSTARTED_LOBBY_TTL_MS = 1000 * 60 * 15; // lobbies that never got past setup: 15 min
+const MAX_LOBBIES = 20000;                      // ~1.5KB each; abandoned ones are evicted first
+const CREATES_PER_IP_PER_MINUTE = 10;
+const MAX_SOCKETS_PER_IP = 30;
+
+const recentCreatesByIp = new Map(); // ip -> timestamps of recent create_lobby calls
+const socketsByIp = new Map();       // ip -> open socket count
+
+function clientIp(req) {
+  // Render (and most hosts) put the real client first in X-Forwarded-For.
+  const forwarded = req.headers["x-forwarded-for"];
+  const first = typeof forwarded === "string" ? forwarded.split(",")[0].trim() : "";
+  return first || req.socket.remoteAddress || "unknown";
+}
+
+function allowCreate(ip) {
+  const t = now();
+  const recent = (recentCreatesByIp.get(ip) ?? []).filter(ts => t - ts < 60000);
+  if (recent.length >= CREATES_PER_IP_PER_MINUTE) {
+    recentCreatesByIp.set(ip, recent);
+    return false;
+  }
+  recent.push(t);
+  recentCreatesByIp.set(ip, recent);
+  return true;
+}
 const HEARTBEAT_INTERVAL = 30000;
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const MAX_NAME_LENGTH = 24;
@@ -34,8 +62,14 @@ function makeLobbyCode() {
   return code;
 }
 
+// Client fields are untrusted JSON: anything that isn't a string is treated as
+// empty (never String()-coerced — an object like {"toString":1} would throw).
+function str(value) {
+  return typeof value === "string" ? value : "";
+}
+
 function cleanName(name, fallback) {
-  const s = String(name ?? "").trim().slice(0, MAX_NAME_LENGTH);
+  const s = str(name).trim().slice(0, MAX_NAME_LENGTH);
   return s || fallback;
 }
 
@@ -56,12 +90,61 @@ function deleteLobby(code) {
   lobbies.delete(code);
 }
 
+function isStarted(lobby) {
+  return !!lobby.players.p2 && !!lobby.state && lobby.state.phase !== "setup";
+}
+
+function hasConnectedPlayer(lobby) {
+  return ["p1", "p2"].some(r => lobby.players[r]?.ws);
+}
+
 function cleanupIdleLobbies() {
   const t = now();
   for (const [code, lobby] of lobbies) {
-    const anyConnected = ["p1", "p2"].some(r => lobby.players[r]?.ws);
-    if (!anyConnected && t - lobby.lastSeen > LOBBY_IDLE_TTL_MS) deleteLobby(code);
+    if (hasConnectedPlayer(lobby)) continue;
+    const ttl = isStarted(lobby) ? LOBBY_IDLE_TTL_MS : UNSTARTED_LOBBY_TTL_MS;
+    if (t - lobby.lastSeen > ttl) deleteLobby(code);
   }
+  const t2 = now();
+  for (const [ip, stamps] of recentCreatesByIp) {
+    if (!stamps.some(ts => t2 - ts < 60000)) recentCreatesByIp.delete(ip);
+  }
+}
+
+// Makes room for a new lobby when at the cap: evicts the least recently used
+// lobby that nobody is connected to (never-started ones first).
+function evictForNewLobby() {
+  let victim = null;
+  for (const lobby of lobbies.values()) {
+    if (hasConnectedPlayer(lobby)) continue;
+    if (!victim
+      || (isStarted(victim) && !isStarted(lobby))
+      || (isStarted(victim) === isStarted(lobby) && lobby.lastSeen < victim.lastSeen)) {
+      victim = lobby;
+    }
+  }
+  if (!victim) return false;
+  deleteLobby(victim.code);
+  return true;
+}
+
+// Ends a lobby on a player's request: tells the partner, frees both sessions.
+// `requester` is the socket that asked; if the leaving player is also connected
+// on another socket (another tab/device), that one is told its game ended.
+function leaveLobby(code, role, requester) {
+  const lobby = lobbies.get(code);
+  if (!lobby) return;
+  const partner = lobby.players[other(role)];
+  if (partner?.ws) {
+    partner.ws.meta = null;
+    sendSafe(partner.ws, { type: "partner_left" });
+  }
+  const own = lobby.players[role];
+  if (own?.ws && own.ws !== requester) {
+    own.ws.meta = null;
+    sendSafe(own.ws, { type: "session_ended" });
+  }
+  deleteLobby(code);
 }
 
 function partnerStatus(lobby, role) {
@@ -118,6 +201,17 @@ function handleMessage(ws, msg) {
 
   if (type === "create_lobby") {
     if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
+    if (!allowCreate(ws.ip)) {
+      sendSafe(ws, { type: "error", message: "Too many games created from this network. Wait a minute and try again." });
+      return;
+    }
+    if (lobbies.size >= MAX_LOBBIES) {
+      cleanupIdleLobbies();
+      if (lobbies.size >= MAX_LOBBIES && !evictForNewLobby()) {
+        sendSafe(ws, { type: "error", message: "The server is full right now. Please try again later." });
+        return;
+      }
+    }
     const code = makeLobbyCode();
     const token = randomUUID();
     const lobby = {
@@ -136,7 +230,7 @@ function handleMessage(ws, msg) {
 
   if (type === "join_lobby") {
     if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
-    const code = String(msg.code || "").trim().toUpperCase();
+    const code = str(msg.code).trim().toUpperCase();
     const lobby = lobbies.get(code);
     if (!lobby) { sendSafe(ws, { type: "error", message: "Lobby not found. Check the code and try again." }); return; }
     if (lobby.players.p2) { sendSafe(ws, { type: "error", message: "That lobby is already full." }); return; }
@@ -156,7 +250,7 @@ function handleMessage(ws, msg) {
   }
 
   if (type === "reconnect") {
-    const meta = sessions.get(String(msg.sessionToken || ""));
+    const meta = sessions.get(str(msg.sessionToken));
     const lobby = meta && lobbies.get(meta.code);
     if (!meta || !lobby) { sendSafe(ws, { type: "reconnect_failed" }); return; }
     if (ws.meta && (ws.meta.code !== meta.code || ws.meta.role !== meta.role)) {
@@ -178,7 +272,7 @@ function handleMessage(ws, msg) {
     if (!ws.meta) { sendSafe(ws, { type: "error", message: "Not connected to a lobby." }); return; }
     const lobby = lobbies.get(ws.meta.code);
     if (!lobby || !lobby.state) {
-      sendSafe(ws, { type: "action_rejected", message: "The game hasn't started yet." });
+      sendSafe(ws, { type: "action_rejected", seq: ws.lastSeq, message: "The game hasn't started yet." });
       if (lobby) sendSafe(ws, { type: "state", state: lobby.state, ack: ws.lastSeq });
       return;
     }
@@ -187,13 +281,13 @@ function handleMessage(ws, msg) {
       result = applyAction(lobby.state, ws.meta.role, msg.action);
     } catch (err) {
       console.error("applyAction failed", err);
-      sendSafe(ws, { type: "action_rejected", message: "Server error while applying that action." });
+      sendSafe(ws, { type: "action_rejected", seq: ws.lastSeq, message: "Server error while applying that action." });
       sendState(lobby, ws.meta.role);
       return;
     }
     lobby.lastSeen = now();
     if (result.error) {
-      sendSafe(ws, { type: "action_rejected", message: result.error });
+      sendSafe(ws, { type: "action_rejected", seq: ws.lastSeq, message: result.error });
       sendState(lobby, ws.meta.role); // acks the rejected action so the client rolls it back
       return;
     }
@@ -202,15 +296,13 @@ function handleMessage(ws, msg) {
     return;
   }
 
+  // Leave works from the bound socket, or — when the player's own connection
+  // was down — from any socket that presents the session token.
   if (type === "leave") {
-    if (!ws.meta) return;
-    const { code, role } = ws.meta;
-    const lobby = lobbies.get(code);
+    const meta = ws.meta ?? sessions.get(str(msg.sessionToken));
     ws.meta = null;
-    if (!lobby) return;
-    const partner = lobby.players[other(role)];
-    if (partner?.ws) sendSafe(partner.ws, { type: "partner_left" });
-    deleteLobby(code);
+    if (meta) leaveLobby(meta.code, meta.role, ws);
+    sendSafe(ws, { type: "left" });
     return;
   }
 
@@ -223,7 +315,19 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  ws.ip = clientIp(req);
+  const count = (socketsByIp.get(ws.ip) ?? 0) + 1;
+  socketsByIp.set(ws.ip, count);
+  ws.on("close", () => {
+    const left = (socketsByIp.get(ws.ip) ?? 1) - 1;
+    if (left <= 0) socketsByIp.delete(ws.ip); else socketsByIp.set(ws.ip, left);
+  });
+  if (count > MAX_SOCKETS_PER_IP) {
+    console.warn(`Refusing connection: ${count} open sockets from ${ws.ip}`);
+    ws.close(1013, "Too many connections");
+    return;
+  }
   ws.isAlive = true;
   ws.meta = null;
   ws.lastSeq = 0;
@@ -233,7 +337,13 @@ wss.on("connection", (ws) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (!msg || typeof msg !== "object") return;
-    handleMessage(ws, msg);
+    // A bad message must never take the process (and every game) down.
+    try {
+      handleMessage(ws, msg);
+    } catch (err) {
+      console.error("handleMessage failed", err);
+      sendSafe(ws, { type: "error", message: "Bad request." });
+    }
   });
   ws.on("close", () => handleDisconnect(ws));
   ws.on("error", () => handleDisconnect(ws));

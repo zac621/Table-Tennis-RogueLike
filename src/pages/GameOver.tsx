@@ -12,8 +12,10 @@ import { createPlayerStats } from "../../shared/engine.js";
 interface Props {
   state: GameState;
   myPlayerId: PlayerId;
-  onRematch: () => void;
+  onRematch: () => unknown;
   onLeave: () => void;
+  rematchPending?: boolean; // our rematch vote is on its way to the server
+  partnerLeft?: boolean;    // the opponent left the lobby after the game ended
 }
 
 // Left column is always the viewer, right is the opponent.
@@ -26,11 +28,13 @@ interface Award {
   title: string;
   stat: (s: PlayerStats) => number;
   detail: (s: PlayerStats) => string;
+  tieDetail?: (value: number) => string; // when tied, don't show one player's specifics
 }
 
 const AWARDS: Award[] = [
   { key: "hit", icon: "💥", title: "Biggest Hit", stat: s => s.biggestHit,
-    detail: s => `${s.biggestHit} damage${s.biggestHitCrit ? " (crit)" : ""}${s.biggestHitRally ? ` · rally ${s.biggestHitRally}` : ""}` },
+    detail: s => `${s.biggestHit} damage${s.biggestHitCrit ? " (crit)" : ""}${s.biggestHitRally ? ` · rally ${s.biggestHitRally}` : ""}`,
+    tieDetail: v => `${v} damage each` },
   { key: "dmg", icon: "🗡️", title: "Damage Dealer", stat: s => s.damageDealt, detail: s => `${s.damageDealt} total damage` },
   { key: "streak", icon: "🔥", title: "Hot Streak", stat: s => s.longestWinStreak, detail: s => `${s.longestWinStreak} wins in a row` },
   { key: "crit", icon: "🎯", title: "Sharpshooter", stat: s => s.crits, detail: s => `${s.crits} critical hit${s.crits === 1 ? "" : "s"}` },
@@ -139,7 +143,9 @@ function Highlights({ players, stats, myId }: { players: Record<PlayerId, Player
             <p className={`font-bold truncate ${color}`}>
               {tie ? "Tie" : `${players[id].name}${id === myId ? " (you)" : ""}`}
             </p>
-            <p className="text-xs text-muted-foreground leading-snug">{a.detail(stats[id])}</p>
+            <p className="text-xs text-muted-foreground leading-snug">
+              {tie && a.tieDetail ? a.tieDetail(a.stat(stats[id])) : a.detail(stats[id])}
+            </p>
           </motion.div>
         );
       })}
@@ -176,7 +182,7 @@ function PlayerCard({ player, isMe, isWinner }: { player: PlayerState; isMe: boo
   );
 }
 
-export default function GameOver({ state, myPlayerId, onRematch, onLeave }: Props) {
+export default function GameOver({ state, myPlayerId, onRematch, onLeave, rematchPending, partnerLeft }: Props) {
   const [logOpen, setLogOpen] = useState(false);
   const oppId: PlayerId = myPlayerId === "p1" ? "p2" : "p1";
   const me = state.players[myPlayerId];
@@ -185,14 +191,16 @@ export default function GameOver({ state, myPlayerId, onRematch, onLeave }: Prop
   const winner = me.hp > 0 ? me : opp.hp > 0 ? opp : null;
   const ralliesPlayed = stats.p1.rallyWins + stats.p2.rallyWins;
   const iWon = winner?.id === myPlayerId;
+  const myVote = !!state.rematchVotes?.[myPlayerId];
+  const oppVote = !!state.rematchVotes?.[oppId];
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex flex-col items-center p-4 sm:p-6 gap-5 text-center max-w-lg mx-auto">
       <h1 className="text-5xl sm:text-6xl font-black text-destructive tracking-widest uppercase pt-4">Game Over</h1>
 
       {winner ? (
-        <div className="space-y-1">
-          <h2 className="text-4xl font-bold text-glow-legendary animate-pulse">{iWon ? "You Win!" : `${winner.name} Wins!`}</h2>
+        <div className="space-y-1 max-w-full">
+          <h2 className="text-4xl font-bold text-glow-legendary animate-pulse break-anywhere">{iWon ? "You Win!" : `${winner.name} Wins!`}</h2>
           <p className="text-muted-foreground">after {ralliesPlayed} rall{ralliesPlayed === 1 ? "y" : "ies"} · {winner.hp} / {winner.maxHp} HP left</p>
         </div>
       ) : (
@@ -236,12 +244,34 @@ export default function GameOver({ state, myPlayerId, onRematch, onLeave }: Prop
         <PlayerCard player={opp} isMe={false} isWinner={winner?.id === opp.id} />
       </div>
 
-      <div className="flex flex-col gap-3 w-full pt-2 pb-6">
-        <Button onClick={onRematch} size="lg" className="w-full font-bold text-xl" data-testid="btn-play-again">
-          Rematch
-        </Button>
-        <Button onClick={onLeave} size="lg" variant="outline" className="w-full font-bold text-xl" data-testid="btn-leave">
-          Leave Lobby
+      {/* Rematch needs both players: each tap is a vote. */}
+      <div className="flex flex-col gap-3 w-full pt-2 pb-6" data-testid="rematch-area">
+        {partnerLeft ? (
+          <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground break-anywhere">
+            {opp.name} left the lobby.
+          </p>
+        ) : myVote ? (
+          <Button size="lg" disabled className="w-full font-bold text-lg whitespace-normal h-auto min-h-11 py-2" data-testid="btn-play-again">
+            Waiting for {opp.name} to accept…
+          </Button>
+        ) : (
+          <>
+            {oppVote && (
+              <p className="text-sm font-semibold text-amber-400 break-anywhere">{opp.name} wants a rematch!</p>
+            )}
+            <Button
+              onClick={onRematch}
+              disabled={rematchPending}
+              size="lg"
+              className="w-full font-bold text-xl touch-manipulation"
+              data-testid="btn-play-again"
+            >
+              {oppVote ? "Accept Rematch" : "Rematch"}
+            </Button>
+          </>
+        )}
+        <Button onClick={onLeave} size="lg" variant="outline" className="w-full font-bold text-xl touch-manipulation" data-testid="btn-leave">
+          {partnerLeft ? "Back to Lobby" : "Leave Lobby"}
         </Button>
       </div>
 
