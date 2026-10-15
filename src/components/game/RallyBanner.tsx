@@ -28,7 +28,12 @@ function highlightChips(r: RallyResult, players: Record<PlayerId, PlayerState>, 
     chips.push({ key: e.id, text: `${e.source === "Poison" ? "☠️" : "🔥"} ${e.source} → ${obj(e.targetId)}`, className: e.source === "Poison" ? "text-lime-300 border-lime-500/50" : "text-orange-300 border-orange-500/50" });
   }
   for (const e of has("Thorns")) chips.push({ key: e.id, text: `🌵 Thorns ${e.amount} → ${obj(e.targetId)}`, className: "text-emerald-300 border-emerald-500/50" });
-  for (const e of has("Shields Up")) chips.push({ key: e.id, text: `🛡️ ${subj(e.targetId)} gained ${e.amount > 1 ? `${e.amount} shields` : "a shield"}`, className: "text-sky-300 border-sky-500/50" });
+  for (const e of has("Shields Up").filter(e => e.category === "special")) {
+    chips.push({ key: e.id, text: `🛡️ ${subj(e.targetId)} gained ${e.amount > 1 ? `${e.amount} shields` : "a shield"}`, className: "text-sky-300 border-sky-500/50" });
+  }
+  for (const e of has("Cleanse")) {
+    chips.push({ key: e.id, text: `✨ ${poss(e.targetId)} ${e.message.replace(/^Shield /, "shield ")}`, className: "text-sky-300 border-sky-500/50" });
+  }
   for (const e of r.combatEvents.filter(e => e.source === "Counter Strike" && e.category === "special")) {
     chips.push({ key: e.id, text: `⚡ ${poss(e.targetId)} counter is armed`, className: "text-yellow-300 border-yellow-500/50" });
   }

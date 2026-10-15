@@ -20,7 +20,7 @@ export function currentEffect(id: string, p: PlayerState): string | null {
     case "rare-2": return `Heals ${2 * n} HP on every 5th total win · next at win #${(Math.floor(p.totalWins / 5) + 1) * 5}`;
     case "rare-4": return `+${3 * n} gold on every 3rd consecutive loss`;
     case "common-4": return `Heals ${n} HP on every 3rd consecutive win`;
-    case "common-6": return `Deals ${n} damage to the opponent on every 3rd consecutive loss (ignores defenses)`;
+    case "common-6": return `Deals ${n} damage to the opponent on every 3rd consecutive loss (ignores Iron Defense)`;
     case "common-7": return `${Math.min(PROC_CHANCE_CAP, n * POISON_CHANCE_PER_STACK)}% chance to poison on a rally win`;
     case "rare-10": return `${Math.min(PROC_CHANCE_CAP, n * IGNITE_CHANCE_PER_STACK)}% chance to ignite on a rally win`;
     case "common-1": return `Blocks ${n} damage from every hit taken (min 1 gets through)`;
@@ -43,7 +43,7 @@ export function currentEffect(id: string, p: PlayerState): string | null {
     case "epic-2": return `Heals ${n} HP for every 2 damage dealt`;
     case "legendary-1": return `+${4 * n} damage on rally wins`;
     case "legendary-4": return `Heals ${2 * n} HP after every rally`;
-    case "legendary-5": return `Every 5th loss in a row is blocked${n > 1 ? ` and stores ${plural(n - 1, "spare shield")}` : ""} · ${plural(p.shield, "spare shield")} stored`;
+    case "legendary-5": return `Every 5th loss in a row tops up to ${plural(n, "shield")} · each blocks one hit, heals 50% of it and cures Poison/Ignite · ${plural(p.shield, "shield")} ready`;
   }
   return null;
 }
