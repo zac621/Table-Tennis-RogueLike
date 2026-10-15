@@ -9,6 +9,9 @@
   .line-clamp-4 { line-clamp: 4; }
   .line-clamp-5 { line-clamp: 5; }
   .line-clamp-6 { line-clamp: 6; }
+  /* Lets long unbroken text (e.g. a 24-char name) wrap anywhere, and — unlike
+     break-words — lets its container shrink below the word's width. */
+  .break-anywhere { overflow-wrap: anywhere; }
 }
 
 @custom-variant dark (&:is(.dark *));

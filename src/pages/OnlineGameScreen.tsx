@@ -127,14 +127,27 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
   // rally number changes). The server also rejects duplicate claims.
   // Plus a short cooldown after every claim: once the server confirms, the
   // second tap of a double tap would otherwise claim the *next* rally too.
+  // The cooldown also restarts whenever a rally is confirmed: on a slow link
+  // the confirmation can arrive just before an impatient re-tap.
   const [claimedRally, setClaimedRally] = useState<number | null>(null);
   const [coolingDown, setCoolingDown] = useState(false);
+  const [cooldownKey, setCooldownKey] = useState(0);
+  const startCooldown = () => {
+    setCoolingDown(true);
+    setCooldownKey(k => k + 1);
+  };
   const waitingForServer = claimedRally === state.rallyNumber || coolingDown;
   useEffect(() => {
-    if (!coolingDown) return;
+    if (!cooldownKey) return;
     const t = setTimeout(() => setCoolingDown(false), 800);
     return () => clearTimeout(t);
-  }, [coolingDown]);
+  }, [cooldownKey]);
+  const lastRallyRef = useRef(state.rallyNumber);
+  useEffect(() => {
+    if (state.rallyNumber === lastRallyRef.current) return;
+    lastRallyRef.current = state.rallyNumber;
+    startCooldown();
+  }, [state.rallyNumber]);
   useEffect(() => {
     if (!waitingForServer) return;
     const t = setTimeout(() => setClaimedRally(null), 4000);
@@ -242,7 +255,7 @@ export default function OnlineGameScreen({ state, myPlayerId, onWin }: Props) {
             if (waitingForServer) return;
             if (!onWin()) return;
             setClaimedRally(state.rallyNumber);
-            setCoolingDown(true);
+            startCooldown();
           }}
           className="touch-manipulation w-full max-w-sm py-7 rounded-2xl bg-primary text-primary-foreground font-black text-2xl uppercase tracking-wider shadow-xl select-none hover:brightness-110 active:brightness-90 transition-[filter] disabled:opacity-60"
         >

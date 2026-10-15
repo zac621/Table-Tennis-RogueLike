@@ -199,8 +199,8 @@ export default function GameOver({ state, myPlayerId, onRematch, onLeave, rematc
       <h1 className="text-5xl sm:text-6xl font-black text-destructive tracking-widest uppercase pt-4">Game Over</h1>
 
       {winner ? (
-        <div className="space-y-1">
-          <h2 className="text-4xl font-bold text-glow-legendary animate-pulse break-words">{iWon ? "You Win!" : `${winner.name} Wins!`}</h2>
+        <div className="space-y-1 max-w-full">
+          <h2 className="text-4xl font-bold text-glow-legendary animate-pulse break-anywhere">{iWon ? "You Win!" : `${winner.name} Wins!`}</h2>
           <p className="text-muted-foreground">after {ralliesPlayed} rall{ralliesPlayed === 1 ? "y" : "ies"} · {winner.hp} / {winner.maxHp} HP left</p>
         </div>
       ) : (
@@ -247,7 +247,7 @@ export default function GameOver({ state, myPlayerId, onRematch, onLeave, rematc
       {/* Rematch needs both players: each tap is a vote. */}
       <div className="flex flex-col gap-3 w-full pt-2 pb-6" data-testid="rematch-area">
         {partnerLeft ? (
-          <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground break-words">
+          <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground break-anywhere">
             {opp.name} left the lobby.
           </p>
         ) : myVote ? (
@@ -257,7 +257,7 @@ export default function GameOver({ state, myPlayerId, onRematch, onLeave, rematc
         ) : (
           <>
             {oppVote && (
-              <p className="text-sm font-semibold text-amber-400 break-words">{opp.name} wants a rematch!</p>
+              <p className="text-sm font-semibold text-amber-400 break-anywhere">{opp.name} wants a rematch!</p>
             )}
             <Button
               onClick={onRematch}

@@ -22,7 +22,31 @@ const sessions = new Map(); // sessionToken -> { code, role }
 
 const LOBBY_IDLE_TTL_MS = 1000 * 60 * 60 * 2; // games in progress: drop after 2h with nobody connected
 const UNSTARTED_LOBBY_TTL_MS = 1000 * 60 * 15; // lobbies that never got past setup: 15 min
-const MAX_LOBBIES = 2000;
+const MAX_LOBBIES = 20000;                      // ~1.5KB each; abandoned ones are evicted first
+const CREATES_PER_IP_PER_MINUTE = 10;
+const MAX_SOCKETS_PER_IP = 30;
+
+const recentCreatesByIp = new Map(); // ip -> timestamps of recent create_lobby calls
+const socketsByIp = new Map();       // ip -> open socket count
+
+function clientIp(req) {
+  // Render (and most hosts) put the real client first in X-Forwarded-For.
+  const forwarded = req.headers["x-forwarded-for"];
+  const first = typeof forwarded === "string" ? forwarded.split(",")[0].trim() : "";
+  return first || req.socket.remoteAddress || "unknown";
+}
+
+function allowCreate(ip) {
+  const t = now();
+  const recent = (recentCreatesByIp.get(ip) ?? []).filter(ts => t - ts < 60000);
+  if (recent.length >= CREATES_PER_IP_PER_MINUTE) {
+    recentCreatesByIp.set(ip, recent);
+    return false;
+  }
+  recent.push(t);
+  recentCreatesByIp.set(ip, recent);
+  return true;
+}
 const HEARTBEAT_INTERVAL = 30000;
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const MAX_NAME_LENGTH = 24;
@@ -66,25 +90,59 @@ function deleteLobby(code) {
   lobbies.delete(code);
 }
 
+function isStarted(lobby) {
+  return !!lobby.players.p2 && !!lobby.state && lobby.state.phase !== "setup";
+}
+
+function hasConnectedPlayer(lobby) {
+  return ["p1", "p2"].some(r => lobby.players[r]?.ws);
+}
+
 function cleanupIdleLobbies() {
   const t = now();
   for (const [code, lobby] of lobbies) {
-    const anyConnected = ["p1", "p2"].some(r => lobby.players[r]?.ws);
-    if (anyConnected) continue;
-    const started = !!lobby.players.p2 && lobby.state && lobby.state.phase !== "setup";
-    const ttl = started ? LOBBY_IDLE_TTL_MS : UNSTARTED_LOBBY_TTL_MS;
+    if (hasConnectedPlayer(lobby)) continue;
+    const ttl = isStarted(lobby) ? LOBBY_IDLE_TTL_MS : UNSTARTED_LOBBY_TTL_MS;
     if (t - lobby.lastSeen > ttl) deleteLobby(code);
+  }
+  const t2 = now();
+  for (const [ip, stamps] of recentCreatesByIp) {
+    if (!stamps.some(ts => t2 - ts < 60000)) recentCreatesByIp.delete(ip);
   }
 }
 
+// Makes room for a new lobby when at the cap: evicts the least recently used
+// lobby that nobody is connected to (never-started ones first).
+function evictForNewLobby() {
+  let victim = null;
+  for (const lobby of lobbies.values()) {
+    if (hasConnectedPlayer(lobby)) continue;
+    if (!victim
+      || (isStarted(victim) && !isStarted(lobby))
+      || (isStarted(victim) === isStarted(lobby) && lobby.lastSeen < victim.lastSeen)) {
+      victim = lobby;
+    }
+  }
+  if (!victim) return false;
+  deleteLobby(victim.code);
+  return true;
+}
+
 // Ends a lobby on a player's request: tells the partner, frees both sessions.
-function leaveLobby(code, role) {
+// `requester` is the socket that asked; if the leaving player is also connected
+// on another socket (another tab/device), that one is told its game ended.
+function leaveLobby(code, role, requester) {
   const lobby = lobbies.get(code);
   if (!lobby) return;
   const partner = lobby.players[other(role)];
   if (partner?.ws) {
     partner.ws.meta = null;
     sendSafe(partner.ws, { type: "partner_left" });
+  }
+  const own = lobby.players[role];
+  if (own?.ws && own.ws !== requester) {
+    own.ws.meta = null;
+    sendSafe(own.ws, { type: "session_ended" });
   }
   deleteLobby(code);
 }
@@ -143,10 +201,14 @@ function handleMessage(ws, msg) {
 
   if (type === "create_lobby") {
     if (ws.meta) { sendSafe(ws, { type: "error", message: "Already in a lobby." }); return; }
+    if (!allowCreate(ws.ip)) {
+      sendSafe(ws, { type: "error", message: "Too many games created from this network. Wait a minute and try again." });
+      return;
+    }
     if (lobbies.size >= MAX_LOBBIES) {
       cleanupIdleLobbies();
-      if (lobbies.size >= MAX_LOBBIES) {
-        sendSafe(ws, { type: "error", message: "The server is busy right now. Try again in a minute." });
+      if (lobbies.size >= MAX_LOBBIES && !evictForNewLobby()) {
+        sendSafe(ws, { type: "error", message: "The server is full right now. Please try again later." });
         return;
       }
     }
@@ -239,7 +301,7 @@ function handleMessage(ws, msg) {
   if (type === "leave") {
     const meta = ws.meta ?? sessions.get(str(msg.sessionToken));
     ws.meta = null;
-    if (meta) leaveLobby(meta.code, meta.role);
+    if (meta) leaveLobby(meta.code, meta.role, ws);
     sendSafe(ws, { type: "left" });
     return;
   }
@@ -253,7 +315,19 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  ws.ip = clientIp(req);
+  const count = (socketsByIp.get(ws.ip) ?? 0) + 1;
+  socketsByIp.set(ws.ip, count);
+  ws.on("close", () => {
+    const left = (socketsByIp.get(ws.ip) ?? 1) - 1;
+    if (left <= 0) socketsByIp.delete(ws.ip); else socketsByIp.set(ws.ip, left);
+  });
+  if (count > MAX_SOCKETS_PER_IP) {
+    console.warn(`Refusing connection: ${count} open sockets from ${ws.ip}`);
+    ws.close(1013, "Too many connections");
+    return;
+  }
   ws.isAlive = true;
   ws.meta = null;
   ws.lastSeq = 0;

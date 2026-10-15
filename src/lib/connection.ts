@@ -54,6 +54,7 @@ type ServerMessage =
   | { type: "session"; code: string; sessionToken: string; playerId: PlayerId }
   | { type: "partner_status"; joined: boolean; connected: boolean; name: string | null }
   | { type: "partner_left" }
+  | { type: "session_ended" }
   | { type: "state"; state: GameState; ack?: number }
   | { type: "action_rejected"; message: string; seq?: number }
   | { type: "reconnect_failed" }
@@ -64,8 +65,9 @@ const PENDING_LEAVE_KEY = "ttr-pending-leave";
 const PING_INTERVAL_MS = 15000;
 const DEAD_SOCKET_MS = 40000;      // no traffic for this long → assume a half-open socket
 const PROBE_TIMEOUT_MS = 8000;     // wake/online probe: no answer in this long → reconnect
-const ACK_TIMEOUT_MS = 5000;       // an action got no reply at all in this long → reconnect
-const RECONNECT_HANDSHAKE_MS = 12000;
+const ACK_TIMEOUT_MS = 5000;       // an action got no reply at all in this long → probe the socket
+const CONNECT_TIMEOUT_MS = 12000;  // socket still not open (grows with each failed attempt)
+const SESSION_TIMEOUT_MS = 30000;  // socket open but no 'session' reply yet (slow links are fine)
 const CREATE_JOIN_HANDSHAKE_MS = 75000; // Render cold starts can take ~1 min
 const STALE_CONNECTING_MS = 6000;
 const MAX_RETRY_DELAY_MS = 8000;
@@ -100,11 +102,21 @@ function loadSession(): Session | null {
 // socket. Used when our own connection is down (or might be half-open), so the
 // opponent is still told and the lobby is freed. Retried on the next page load
 // until the server confirms.
+let leaveInFlight: WebSocket | null = null;
+
 function sendLeave(sessionToken: string) {
   writeStorage(PENDING_LEAVE_KEY, sessionToken);
+  if (leaveInFlight) return;
   let sock: WebSocket;
   try { sock = new WebSocket(buildWsUrl()); } catch { return; }
-  const giveUp = setTimeout(() => { try { sock.close(); } catch { /* ignore */ } }, 15000);
+  leaveInFlight = sock;
+  // Short give-up: a socket stuck connecting would queue the next create/join
+  // behind it. A failed leave is retried on the next wake/online/create/join.
+  const giveUp = setTimeout(() => { try { sock.close(); } catch { /* ignore */ } }, 6000);
+  sock.onclose = () => {
+    clearTimeout(giveUp);
+    if (leaveInFlight === sock) leaveInFlight = null;
+  };
   sock.onopen = () => sock.send(JSON.stringify({ type: "leave", sessionToken }));
   sock.onmessage = (event) => {
     try {
@@ -114,6 +126,12 @@ function sendLeave(sessionToken: string) {
     clearTimeout(giveUp);
     sock.close();
   };
+}
+
+// Finishes a leave that couldn't reach the server earlier (no network then).
+function retryPendingLeave() {
+  const token = readStorage(PENDING_LEAVE_KEY);
+  if (token) sendLeave(token);
 }
 
 interface Options {
@@ -227,16 +245,25 @@ export function useGameConnection({ onRejected }: Options = {}) {
     seqRef.current = 0; // seq/ack are per socket
     setPartner(prev => ({ ...prev, known: false }));
 
-    // Give up on a handshake that never completes (lost upgrade on a dead path).
-    const handshakeMs = hello.type === "reconnect" ? RECONNECT_HANDSHAKE_MS : CREATE_JOIN_HANDSHAKE_MS;
-    handshakeTimerRef.current = setTimeout(() => {
-      if (socketRef.current !== sock) return;
-      if (sessionRef.current) dropAndReconnect();
-      else resetToIdle("Couldn't reach the game server. Check your connection and try again.");
-    }, handshakeMs);
+    // Give up on a handshake that never completes (lost upgrade on a dead
+    // path). The short limit only applies until the socket opens — after that
+    // the link demonstrably works, so a slow one gets plenty of time.
+    const isReconnect = hello.type === "reconnect";
+    const armHandshakeTimer = (ms: number) => {
+      clearHandshake();
+      handshakeTimerRef.current = setTimeout(() => {
+        if (socketRef.current !== sock) return;
+        if (sessionRef.current) dropAndReconnect();
+        else resetToIdle("Couldn't reach the game server. Check your connection and try again.");
+      }, ms);
+    };
+    armHandshakeTimer(isReconnect
+      ? Math.min(40000, CONNECT_TIMEOUT_MS + 6000 * retryAttemptsRef.current)
+      : CREATE_JOIN_HANDSHAKE_MS);
 
     sock.onopen = () => {
       lastMessageAtRef.current = Date.now();
+      if (isReconnect) armHandshakeTimer(SESSION_TIMEOUT_MS);
       sock.send(JSON.stringify(hello));
     };
 
@@ -288,6 +315,10 @@ export function useGameConnection({ onRejected }: Options = {}) {
           break;
         case "reconnect_failed":
           resetToIdle("Your previous game is no longer available.");
+          break;
+        case "session_ended":
+          // We quit this game from another tab/device.
+          resetToIdle("You left this game on another tab or device.");
           break;
         case "error":
           if (!sessionRef.current) {
@@ -374,8 +405,7 @@ export function useGameConnection({ onRejected }: Options = {}) {
   // Resume a saved session on load (e.g. after a page refresh), and finish a
   // leave that couldn't reach the server last time.
   useEffect(() => {
-    const pendingLeave = readStorage(PENDING_LEAVE_KEY);
-    if (pendingLeave) sendLeave(pendingLeave);
+    retryPendingLeave();
     if (sessionRef.current) open({ type: "reconnect", sessionToken: sessionRef.current.sessionToken });
     return () => { clearRetry(); closeSocket(); };
   }, [open]);
@@ -395,6 +425,7 @@ export function useGameConnection({ onRejected }: Options = {}) {
 
     const onWake = () => {
       if (document.visibilityState !== "visible") return;
+      retryPendingLeave();
       const sock = socketRef.current;
       // The socket may have died silently while the phone slept or switched networks.
       if (sock?.readyState === WebSocket.OPEN) probe(sock);
@@ -413,12 +444,14 @@ export function useGameConnection({ onRejected }: Options = {}) {
   }, [reconnectNow]);
 
   const createLobby = useCallback((playerName: string) => {
+    retryPendingLeave();
     setError("");
     setStatus("connecting");
     open({ type: "create_lobby", playerName });
   }, [open]);
 
   const joinLobby = useCallback((code: string, playerName: string) => {
+    retryPendingLeave();
     setError("");
     setStatus("connecting");
     open({ type: "join_lobby", code, playerName });
@@ -446,10 +479,11 @@ export function useGameConnection({ onRejected }: Options = {}) {
     sock.send(JSON.stringify({ type: "action", seq, action }));
     pendingRef.current = [...pendingRef.current, { seq, action, predicted, resent: false }];
     syncPending();
-    // The server answers every action within milliseconds. Silence means the
-    // socket is half-open: reconnect now (the action is resent afterwards).
+    // The server answers every action within milliseconds. Long silence means
+    // the link is slow or the socket is half-open: probe it, and reconnect only
+    // if the probe gets no answer either (the action is resent afterwards).
     setTimeout(() => {
-      if (socketRef.current === sock && lastMessageAtRef.current < sentAt) dropAndReconnect();
+      if (socketRef.current === sock && lastMessageAtRef.current < sentAt) probe(sock);
     }, ACK_TIMEOUT_MS);
     return "sent";
   }, []);

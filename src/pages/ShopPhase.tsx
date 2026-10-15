@@ -23,6 +23,8 @@ interface Props {
 // shop for a moment so a double tap can't buy that card (or hit Refresh/Done).
 const AFTER_BUY_GUARD_MS = 350;
 
+const REFRESH_RETAP_GUARD_MS = 1000;
+
 const DISCOUNT_IDS = ['common-5', 'legendary-3'];
 
 export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId, refreshPending }: Props) {
@@ -32,6 +34,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId,
   const oppDone = oppId === 'p1' ? state.shopState.p1Done : state.shopState.p2Done;
   const [logOpen, setLogOpen] = useState(false);
   const lastBuyAtRef = useRef(0);
+  const lastRefreshAtRef = useRef(0);
   const justBought = () => performance.now() - lastBuyAtRef.current < AFTER_BUY_GUARD_MS;
 
   const player = state.players[activeId];
@@ -56,7 +59,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId,
         className="min-h-screen flex flex-col items-center justify-center p-6 text-center gap-6"
       >
         <Clock className="w-12 h-12 text-muted-foreground animate-pulse" />
-        <h2 className="text-3xl font-bold text-primary break-words max-w-full">Waiting for {other.name}…</h2>
+        <h2 className="text-3xl font-bold text-primary break-anywhere max-w-full">Waiting for {other.name}…</h2>
         <p className="text-muted-foreground">
           Your shopping is done. Game resumes when {other.name} finishes.
         </p>
@@ -92,7 +95,7 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId,
         <div className="bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
           <div>
             <h3 className="text-2xl font-bold">Your Shop</h3>
-            <p className="text-xs text-muted-foreground break-words">
+            <p className="text-xs text-muted-foreground break-anywhere">
               {state.players[oppId].name} {oppDone ? "is done shopping" : "is shopping at the same time"}
             </p>
           </div>
@@ -236,7 +239,11 @@ export default function ShopPhase({ state, onBuy, onDone, onRefresh, myPlayerId,
           size="lg"
           className={`gap-2 font-semibold touch-manipulation ${!canRefresh ? 'opacity-40 cursor-not-allowed' : ''}`}
           onClick={() => {
+            // Also ignore a quick second tap: on a fast link the first refresh can
+            // complete before it, and it would be charged again.
             if (!canRefresh || refreshPending || justBought()) return;
+            if (performance.now() - lastRefreshAtRef.current < REFRESH_RETAP_GUARD_MS) return;
+            lastRefreshAtRef.current = performance.now();
             onRefresh();
           }}
           disabled={!canRefresh || refreshPending}

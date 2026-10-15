@@ -14,7 +14,7 @@ export default function RallyDetermination({ p1Name, p2Name, myPlayerId, onWinne
   const label = (id: 'p1' | 'p2') =>
     id === myPlayerId ? 'I Won the Rally' : `${id === 'p1' ? p1Name : p2Name} Won the Rally`;
   const buttonClass =
-    "flex-1 min-w-0 h-auto min-h-24 py-3 whitespace-normal break-words text-xl sm:text-2xl font-bold " +
+    "flex-1 min-w-0 h-auto min-h-24 py-3 whitespace-normal break-anywhere text-xl sm:text-2xl font-bold " +
     "bg-secondary hover:bg-secondary/80 text-secondary-foreground touch-manipulation";
 
   return (

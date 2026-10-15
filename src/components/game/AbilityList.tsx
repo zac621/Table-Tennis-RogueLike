@@ -79,7 +79,7 @@ export default function AbilityList({ player, max = 8, size = "sm" }: Props) {
           <div className="space-y-3 pb-2">
             <div className="flex items-center gap-2 text-xs uppercase tracking-widest">
               <span className={`px-2 py-0.5 rounded border glow-${selected.rarity} text-glow-${selected.rarity}`}>{selected.rarity}</span>
-              <span className="text-muted-foreground">{player.name}</span>
+              <span className="text-muted-foreground truncate min-w-0">{player.name}</span>
             </div>
             <p className="text-base leading-relaxed">{selected.description}</p>
             {currentEffect(selected.id, player) && (

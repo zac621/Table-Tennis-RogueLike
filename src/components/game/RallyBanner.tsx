@@ -75,7 +75,7 @@ export default function RallyBanner({ result, players, myId, onDetails }: Props)
                 💥 CRITICAL HIT!
               </motion.p>
             )}
-            <p className={`font-bold leading-tight break-words ${iWon ? "text-green-300" : "text-red-300"}`}>{headline}</p>
+            <p className={`font-bold leading-tight break-anywhere ${iWon ? "text-green-300" : "text-red-300"}`}>{headline}</p>
           </div>
           <button
             type="button"

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Clock, Loader2, MonitorSmartphone, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -29,7 +29,7 @@ function CenteredMessage({ icon, title, children }: { icon: ReactNode; title: st
       className="min-h-screen flex flex-col items-center justify-center p-6 text-center gap-6"
     >
       {icon}
-      <h2 className="text-3xl font-bold text-primary break-words max-w-full">{title}</h2>
+      <h2 className="text-3xl font-bold text-primary break-anywhere max-w-full">{title}</h2>
       {children}
     </motion.div>
   );
@@ -42,6 +42,10 @@ export default function App() {
   });
   const { status, session, gameState, partner, inFlight } = conn;
   const [confirmQuit, setConfirmQuit] = useState(false);
+  // Nothing left to quit once the game has ended for us (e.g. the opponent quit).
+  useEffect(() => {
+    if (!session) setConfirmQuit(false);
+  }, [session]);
 
   // Remember who we are, so the game-over summary can stay up after the
   // opponent leaves (the session is gone by then).
@@ -165,7 +169,7 @@ export default function App() {
         ) : (
           <>
             <CenteredMessage icon={<Clock className="w-12 h-12 text-primary animate-pulse" />} title="Lobby Connected!">
-              <p className="text-muted-foreground text-lg break-words max-w-full">
+              <p className="text-muted-foreground text-lg break-anywhere max-w-full">
                 Waiting for <span className="text-foreground font-bold">{opponentName}</span> to configure and start the game…
               </p>
               <p className="text-xs text-muted-foreground">Code: <span className="font-bold tracking-widest">{session.code}</span></p>
@@ -252,7 +256,7 @@ export default function App() {
       {showPartnerBanner && (
         <div className="sticky top-0 z-40 bg-yellow-500/15 border-b border-yellow-500/40 text-yellow-300 text-sm px-4 py-2 flex items-center justify-center gap-2" data-testid="partner-banner">
           <WifiOff className="w-4 h-4 shrink-0" />
-          <span className="min-w-0 break-words">
+          <span className="min-w-0 break-anywhere">
             {partner.name ?? "Your opponent"} disconnected — waiting for them to reconnect…
           </span>
           <button

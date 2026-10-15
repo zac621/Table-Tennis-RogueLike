@@ -29,7 +29,7 @@ export default function SetupScreen({ p1Name, p2Name, onStart, pending }: Props)
           <CardTitle className="text-3xl font-bold text-center text-primary tracking-tight">
             Game Setup
           </CardTitle>
-          <p className="text-center text-muted-foreground text-sm pt-1">
+          <p className="text-center text-muted-foreground text-sm pt-1 break-anywhere">
             <span className="text-foreground font-semibold">{p1Name}</span>
             {" vs "}
             <span className="text-foreground font-semibold">{p2Name}</span>

@@ -20,12 +20,12 @@ export default function UpgradeDraft({ pool, draftTurn, p1Name, p2Name, myPlayer
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex flex-col items-center justify-center p-6 space-y-8">
       <div className="text-center space-y-2">
         <h2 className="text-primary text-3xl font-bold">Initial Draft</h2>
-        <p className="text-xl text-muted-foreground break-words"><span className="text-primary font-bold">{isMyTurn ? 'Your' : `${activeName}'s`}</span> turn to pick</p>
+        <p className="text-xl text-muted-foreground break-anywhere"><span className="text-primary font-bold">{isMyTurn ? 'Your' : `${activeName}'s`}</span> turn to pick</p>
       </div>
 
       <div className="flex flex-col items-center gap-4">
         {!isMyTurn && (
-          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground break-words max-w-full">
+          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground break-anywhere max-w-full">
             Waiting for <span className="font-semibold text-foreground">{activeName}</span> to pick their first ability.
           </div>
         )}

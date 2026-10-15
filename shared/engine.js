@@ -253,7 +253,7 @@ export function resolveRally(winner, loser) {
   const berserker = countUpgrade(w.upgrades, 'epic-1');
   addDamage('Berserker', w.winStreak * berserker, `+1 per win in a ${w.winStreak}-win streak${stacks(berserker)}`);
   const lifeStealCount = countUpgrade(w.upgrades, 'legendary-2');
-  addDamage('Life Steal', lifeStealCount * 2, `Stole HP${stacks(lifeStealCount)}`);
+  addDamage('Life Steal', lifeStealCount * 2, `+2 damage${stacks(lifeStealCount)}`);
 
   // Crit (Dead Eye) + Headhunter
   const deadEye = countUpgrade(w.upgrades, 'rare-6');

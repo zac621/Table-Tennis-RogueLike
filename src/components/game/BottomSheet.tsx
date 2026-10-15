@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
@@ -16,23 +16,61 @@ interface Props {
 // Rendered into <body> through a portal: inside the page tree, a parent's
 // margins (space-y) or transform (motion) would shift the fixed overlay and
 // leave part of the screen uncovered and tappable.
+// Body scroll lock shared by all open sheets: lock on the first, unlock when
+// the last one closes (saving/restoring per sheet breaks when sheets stack and
+// close out of order).
+let openSheets = 0;
+let overflowBeforeLock = "";
+function lockScroll() {
+  if (openSheets === 0) {
+    overflowBeforeLock = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  openSheets += 1;
+}
+function unlockScroll() {
+  openSheets = Math.max(0, openSheets - 1);
+  if (openSheets === 0) document.body.style.overflow = overflowBeforeLock;
+}
+
+// Taps right after a sheet opens are ignored: the second tap of a double tap on
+// whatever opened it would otherwise land on the sheet as it slides up (e.g.
+// confirming "Quit game" by accident).
+const OPEN_TAP_GUARD_MS = 350;
+
 export default function BottomSheet({ open, onClose, title, children, zIndexClass = "z-[60]" }: Props) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const openedAtRef = useRef(0);
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    openedAtRef.current = performance.now();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCloseRef.current(); };
     window.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    lockScroll();
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
+      unlockScroll();
     };
-  }, [open, onClose]);
+  }, [open]);
+
+  const guardEarlyTaps = (e: MouseEvent) => {
+    if (performance.now() - openedAtRef.current < OPEN_TAP_GUARD_MS) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  };
 
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className={`fixed inset-0 ${zIndexClass} flex items-end sm:items-center justify-center`} role="dialog" aria-modal="true">
+        <div
+          className={`fixed inset-0 ${zIndexClass} flex items-end sm:items-center justify-center`}
+          role="dialog"
+          aria-modal="true"
+          onClickCapture={guardEarlyTaps}
+        >
           <motion.div
             className="absolute inset-0 bg-black/60"
             initial={{ opacity: 0 }}
