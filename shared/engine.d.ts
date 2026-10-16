@@ -10,11 +10,13 @@ export declare const POISON_CHANCE_PER_STACK: number;
 export declare const IGNITE_CHANCE_PER_STACK: number;
 export declare const PROC_CHANCE_CAP: number;
 export declare const REFRESH_COST: number;
+export declare const ETERNAL_FLAME_PCT_PER_STACK: number;
 
 export declare function hasUpgrade(upgrades: Upgrade[], id: string): boolean;
 export declare function countUpgrade(upgrades: Upgrade[], id: string): number;
 export declare function applyUpgradeCombining(upgrades: Upgrade[]): Upgrade[];
 export declare function shopDiscount(upgrades: Upgrade[]): number;
+export declare function eternalFlameHeal(maxHp: number, copies: number): number;
 export declare function finalCost(upgrade: Upgrade, upgrades: Upgrade[]): number;
 export declare function buildExcludeList(upgrades: Upgrade[]): string[];
 export declare function drawUpgrades(count: number, forceRarity?: Rarity | null, exclude?: string[]): Upgrade[];

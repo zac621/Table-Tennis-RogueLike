@@ -6,6 +6,8 @@ import {
   POISON_CHANCE_PER_STACK,
   IGNITE_CHANCE_PER_STACK,
   PROC_CHANCE_CAP,
+  ETERNAL_FLAME_PCT_PER_STACK,
+  eternalFlameHeal,
 } from "../../shared/engine.js";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -42,7 +44,7 @@ export function currentEffect(id: string, p: PlayerState): string | null {
     case "epic-6": return `Crits deal +${3 * n} extra damage`;
     case "epic-2": return `Heals ${n} HP for every 2 damage dealt`;
     case "legendary-1": return `+${4 * n} damage on rally wins`;
-    case "legendary-4": return `Heals ${2 * n} HP after every rally`;
+    case "legendary-4": return `Heals ${ETERNAL_FLAME_PCT_PER_STACK * n}% of max HP (${eternalFlameHeal(p.maxHp, n)} HP) after every rally${p.healingReduction ? " · halved by Ignite" : ""}`;
     case "legendary-5": return `Every 5th loss in a row tops up to ${plural(n, "shield")} · each blocks one hit, heals 50% of it and cures Poison/Ignite · ${plural(p.shield, "shield")} ready`;
   }
   return null;

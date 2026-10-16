@@ -40,7 +40,7 @@ export const LEGENDARY_UPGRADES = [
   { id: 'epic-2',      name: 'Vampire',       rarity: 'legendary', cost: 50, description: 'Recover 1 HP for every 2 damage you deal (tracks overflow between rallies).' },
   { id: 'legendary-1', name: 'War Machine',   rarity: 'legendary', cost: 50, description: 'Your base damage on rally wins is increased by 4 per copy. Stacks.' },
   { id: 'legendary-3', name: 'The Banker',    rarity: 'legendary', cost: 50, description: 'All shop upgrades cost 3 less gold. (min 1, stacks with Bargain Hunt; refreshes still cost 10g)' },
-  { id: 'legendary-4', name: 'Eternal Flame', rarity: 'legendary', cost: 50, description: 'Gain 2 HP after every rally (win or lose). Stacks per copy.' },
+  { id: 'legendary-4', name: 'Eternal Flame', rarity: 'legendary', cost: 50, description: 'Heal 2% of your max HP after every rally (win or lose). Stacks — each copy adds 2% (3 copies heal 6%).' },
   { id: 'legendary-5', name: 'Shields Up',    rarity: 'legendary', cost: 50, description: 'Every 5th loss in a row gives you 1 shield per copy. A shield fully blocks the next time you would take damage (Poison, Ignite and Thorns included), heals you for 50% of the blocked damage, and cures and prevents Poison and Ignite. (max 4)' },
 ];
 
@@ -159,6 +159,13 @@ export function drawUpgrades(count, forceRarity = null, exclude = []) {
 //             'heal'       – HP restored to targetId (actual amount after caps)
 //             'special'    – crits, procs, shields gained, Phoenix, etc.
 //             'gold'       – gold moved by an ability
+
+// Eternal Flame (legendary-4): 2% of max HP per copy, at least 1 HP.
+export const ETERNAL_FLAME_PCT_PER_STACK = 2;
+export function eternalFlameHeal(maxHp, copies) {
+  if (copies <= 0) return 0;
+  return Math.max(1, Math.round((maxHp * ETERNAL_FLAME_PCT_PER_STACK * copies) / 100));
+}
 
 function applyHealing(player, amount) {
   const healAmount = player.healingReduction ? Math.floor(amount / 2) : amount;
@@ -792,19 +799,20 @@ function resolveRallyWin(state, winnerId) {
     };
   }
 
-  // Eternal Flame (legendary-4): +2 HP per copy after every rally
+  // Eternal Flame (legendary-4): 2% of max HP per copy after every rally
   const healAmounts = { ...result.healAmounts };
   const combatEvents = [...result.combatEvents];
   for (const id of ['p1', 'p2']) {
     const copies = countUpgrade(players[id].upgrades, 'legendary-4');
     if (copies > 0) {
       const p = { ...players[id] };
-      const actual = applyHealing(p, copies * 2);
+      const amount = eternalFlameHeal(p.maxHp, copies);
+      const actual = applyHealing(p, amount);
       healAmounts[id] += actual;
       players[id] = p;
-      const notes = [`+2 HP after every rally${stacks(copies)}`];
+      const notes = [`${ETERNAL_FLAME_PCT_PER_STACK * copies}% of max HP after every rally`];
       if (p.healingReduction) notes.push('halved by Ignite');
-      if (actual < (p.healingReduction ? copies : copies * 2)) notes.push('capped at max HP');
+      if (actual < (p.healingReduction ? Math.floor(amount / 2) : amount)) notes.push('capped at max HP');
       combatEvents.push({ id: `e${combatEvents.length + 1}`, category: 'heal', source: 'Eternal Flame', targetId: id, amount: actual, message: notes.join(' · ') });
     }
   }
