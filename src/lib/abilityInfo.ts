@@ -44,7 +44,13 @@ export function currentEffect(id: string, p: PlayerState): string | null {
     case "epic-6": return `Crits deal +${3 * n} extra damage`;
     case "epic-2": return `Heals ${n} HP for every 2 damage dealt`;
     case "legendary-1": return `+${4 * n} damage on rally wins`;
-    case "legendary-4": return `Heals ${ETERNAL_FLAME_PCT_PER_STACK * n}% of max HP (${eternalFlameHeal(p.maxHp, n)} HP) after every rally${p.healingReduction ? " · halved by Ignite" : ""}`;
+    case "legendary-4": {
+      // Predict the next rally: Ignite halves the heal, unless a shield is
+      // ready (it always cures Ignite before Eternal Flame heals).
+      const heal = eternalFlameHeal(p.maxHp, n);
+      const ignited = p.igniteTicks > 0 && p.shield === 0;
+      return `Heals ${ETERNAL_FLAME_PCT_PER_STACK * n}% of max HP (${ignited ? `${Math.floor(heal / 2)} HP while Ignited` : `${heal} HP`}) after every rally`;
+    }
     case "legendary-5": return `Every 5th loss in a row tops up to ${plural(n, "shield")} · each blocks one hit, heals 50% of it and cures Poison/Ignite · ${plural(p.shield, "shield")} ready`;
   }
   return null;
